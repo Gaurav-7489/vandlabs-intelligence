@@ -1,5 +1,6 @@
 """A minimal, in-process OIDC provider for tests (Authorization Code + PKCE, refresh rotation, JWKS). NOT for production."""
 import base64
+import os
 import hashlib
 import secrets
 import time
@@ -9,9 +10,9 @@ from urllib.parse import urlencode
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-ISSUER = "https://idp.test"
+ISSUER = os.environ.get("TEST_ISSUER", "https://idp.test")
 CLIENT_ID, CLIENT_SECRET, API_AUD = "vand-web", "s3cret", "https://api.vand.test"
 
 
@@ -68,10 +69,19 @@ class TestIssuer:
         @app.get("/authorize")
         async def authorize(request: Request):
             q = request.query_params
+            if "sim_user" not in q:  # interactive mode for browser E2E: a tiny login form
+                fields = "".join(f'<input type="hidden" name="{k}" value="{v}">' for k, v in q.items())
+                return HTMLResponse(f"""<!doctype html><html lang=en><title>Test IdP</title><form method=get action=/authorize>{fields}
+                  <label>Email <input name=sim_user type=email required></label>
+                  <input type=hidden name=sim_mfa value=0><label><input type=checkbox name=sim_mfa value=1 checked> MFA</label><button>Sign in</button></form>""")
             code = secrets.token_urlsafe(16)
             me.codes[code] = {"email": q["sim_user"], "mfa": q.get("sim_mfa", "1") == "1", "nonce": q["nonce"], "challenge": q["code_challenge"],
                               "verified": q.get("sim_verified", "1") == "1", "redirect_uri": q["redirect_uri"]}
             return RedirectResponse(f"{q['redirect_uri']}?{urlencode({'code': code, 'state': q['state']})}", status_code=302)
+
+        @app.get("/logout")
+        async def logout(request: Request):
+            return RedirectResponse(request.query_params.get("post_logout_redirect_uri", "/"), status_code=302)
 
         @app.post("/oauth/token")
         async def token(grant_type: str = Form(), client_id: str = Form(), client_secret: str = Form(), code: str | None = Form(None),

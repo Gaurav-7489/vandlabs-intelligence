@@ -4,6 +4,6 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port: 5173, proxy: { "/api": { target: "http://localhost:8000", changeOrigin: false } } },
+  server: { port: 5173, proxy: { "/api": { target: process.env.VITE_API_TARGET ?? "http://localhost:8000", changeOrigin: false } } },
   build: { sourcemap: false, chunkSizeWarningLimit: 250 },
 });
