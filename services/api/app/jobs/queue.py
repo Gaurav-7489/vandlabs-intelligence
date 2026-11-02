@@ -11,17 +11,22 @@ from uuid import UUID
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.errors import RateLimited
 from app.models import Job
 
 STALE_LOCK = timedelta(minutes=10)
 
 
 async def enqueue(session: AsyncSession, *, org_id: UUID, kind: str, payload: dict[str, Any],
-                  idempotency_key: str | None = None, max_attempts: int = 4) -> Job:
+                  idempotency_key: str | None = None, max_attempts: int = 4, max_queued: int | None = None) -> Job:
     if idempotency_key:
         existing = (await session.execute(select(Job).where(Job.org_id == org_id, Job.idempotency_key == idempotency_key))).scalar_one_or_none()
         if existing:
             return existing
+    queued = (await session.execute(select(func.count()).select_from(Job).where(Job.status.in_(["queued", "retry_scheduled"])))).scalar_one()
+    if queued >= (max_queued if max_queued is not None else get_settings().max_queued_jobs_per_org):
+        raise RateLimited("Too many queued jobs for this organization; try again shortly", headers={"Retry-After": "30"})
     job = Job(org_id=org_id, kind=kind, payload=payload, idempotency_key=idempotency_key, max_attempts=max_attempts)
     session.add(job)
     await session.flush()

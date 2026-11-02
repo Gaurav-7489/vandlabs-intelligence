@@ -71,6 +71,30 @@ class RateLimiter:
         if not allowed:
             raise RateLimited("Rate limit exceeded", headers={"Retry-After": str(max(1, int(retry)))})
 
+    async def acquire_slot(self, name: str, subject: str, max_concurrent: int, ttl: int = 120) -> str:
+        """Concurrency cap (e.g. simultaneous AI generations). Slots expire on their own so a crashed request cannot leak capacity."""
+        key = f"conc:{name}:{subject}"
+        token = f"{time.time()}"
+        try:
+            pipe = self._redis.pipeline()
+            pipe.zremrangebyscore(key, 0, time.time() - ttl)
+            pipe.zadd(key, {token: time.time()})
+            pipe.zcard(key)
+            pipe.expire(key, ttl)
+            n = (await pipe.execute())[2]
+        except Exception:  # noqa: BLE001
+            raise Unavailable("Service temporarily unavailable", headers={"Retry-After": "5"}) from None
+        if n > max_concurrent:
+            await self._redis.zrem(key, token)
+            raise RateLimited("Too many concurrent requests", headers={"Retry-After": "3"})
+        return token
+
+    async def release_slot(self, name: str, subject: str, token: str) -> None:
+        try:
+            await self._redis.zrem(f"conc:{name}:{subject}", token)
+        except Exception as exc:  # noqa: BLE001 - slot also expires by TTL
+            log.warning("slot_release_failed", extra={"err": type(exc).__name__})
+
     async def ping(self) -> bool:
         try:
             return bool(await self._redis.ping())

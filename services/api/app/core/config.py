@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = ""
     ai_provider_order: str = "anthropic,openai"
+    ai_pricing_json: str = ""  # [{"model","input_per_mtok_usd","output_per_mtok_usd","effective_date","source"}]; empty => USD cost unavailable
     ai_max_input_chars: int = 24_000
     ai_max_output_tokens: int = 800
     ai_timeout_seconds: float = 30.0

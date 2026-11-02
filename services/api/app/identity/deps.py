@@ -143,6 +143,7 @@ async def get_principal(
             denial = ("authz.mfa_required", "Multi-factor authentication required for this role", "mfa_required")
         else:
             request.state.org_id = org_id
+            await state.limiter.hit("org_read", f"org:{org_id}")  # tenant-wide fairness quota across all of its users
             yield Principal(user=ident.user, org_id=org_id, role=m.role, session=session, ip=ident.ip)
     if denial:
         # Recorded in its own transaction (the tenant tx above is read-only). Same message for "no such org"

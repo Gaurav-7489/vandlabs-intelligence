@@ -47,18 +47,37 @@ class Provider(Protocol):
     async def complete(self, system: str, user: str, max_tokens: int, timeout: float) -> Completion: ...
 
 
-# USD per million tokens (input, output). Estimates for budgeting; verify against provider pricing before billing use.
-PRICES: dict[str, tuple[float, float]] = {}
+@dataclass(frozen=True)
+class Price:
+    """Explicit, dated price entry supplied via configuration (VAND_AI_PRICING_JSON). Nothing is built in or guessed."""
+    model: str
+    input_per_mtok_usd: float
+    output_per_mtok_usd: float
+    effective_date: str
+    source: str
+
+
+def load_pricing(raw: str) -> dict[str, Price]:
+    if not raw.strip():
+        return {}
+    return {p["model"]: Price(p["model"], float(p["input_per_mtok_usd"]), float(p["output_per_mtok_usd"]), p["effective_date"], p["source"])
+            for p in json.loads(raw)}
+
+
+def estimate_cost(pricing: dict[str, Price], model: str, input_tokens: int, output_tokens: int) -> float | None:
+    """None => USD cost unavailable (no configured price). Callers must show tokens only in that case."""
+    pr = pricing.get(model)
+    return None if pr is None else (input_tokens * pr.input_per_mtok_usd + output_tokens * pr.output_per_mtok_usd) / 1_000_000
 
 
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, key: str, model: str):
-        self.key, self.model = key, model
+    def __init__(self, key: str, model: str, transport: httpx.AsyncBaseTransport | None = None):
+        self.key, self.model, self.transport = key, model, transport
 
     async def complete(self, system: str, user: str, max_tokens: int, timeout: float) -> Completion:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as c:
             r = await c.post("https://api.anthropic.com/v1/messages", headers={
                 "x-api-key": self.key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
                 json={"model": self.model, "max_tokens": max_tokens, "system": system,
@@ -73,11 +92,11 @@ class AnthropicProvider:
 class OpenAIProvider:
     name = "openai"
 
-    def __init__(self, key: str, model: str):
-        self.key, self.model = key, model
+    def __init__(self, key: str, model: str, transport: httpx.AsyncBaseTransport | None = None):
+        self.key, self.model, self.transport = key, model, transport
 
     async def complete(self, system: str, user: str, max_tokens: int, timeout: float) -> Completion:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as c:
             r = await c.post("https://api.openai.com/v1/chat/completions", headers={"authorization": f"Bearer {self.key}"},
                              json={"model": self.model, "max_completion_tokens": max_tokens,
                                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]})
@@ -91,6 +110,7 @@ class OpenAIProvider:
 class AIGateway:
     def __init__(self, settings: Settings, providers: list[Provider] | None = None):
         self.s = settings
+        self.pricing = load_pricing(settings.ai_pricing_json)
         if providers is not None:
             self.providers = providers
         else:
@@ -134,8 +154,8 @@ class AIGateway:
                 session.add(AiUsage(org_id=org_id, user_id=user_id, task=task, provider=p.name, model=p.model,
                                     prompt_version=PROMPT_VERSION, status="failed", latency_ms=int((time.monotonic() - t0) * 1000)))
                 continue
-            price = PRICES.get(p.model, (0.0, 0.0))
-            cost = Decimal(str((c.input_tokens * price[0] + c.output_tokens * price[1]) / 1_000_000))
+            est = estimate_cost(self.pricing, p.model, c.input_tokens, c.output_tokens)
+            cost = Decimal(str(est)) if est is not None else Decimal(0)  # stored 0 + reported as unavailable when no price is configured
             session.add(AiUsage(org_id=org_id, user_id=user_id, task=task, provider=p.name, model=p.model,
                                 prompt_version=PROMPT_VERSION, input_tokens=c.input_tokens, output_tokens=c.output_tokens,
                                 cost_usd=cost, status="ok", latency_ms=int((time.monotonic() - t0) * 1000)))

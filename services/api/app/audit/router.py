@@ -1,8 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 
+from app.ai.gateway import estimate_cost
+from app.core.state import get_state
 from app.identity.deps import Principal, require
 from app.identity.permissions import P
 from app.models import AiUsage, AuditEvent
@@ -26,10 +28,14 @@ async def list_audit(p: Annotated[Principal, Depends(require(P.AUDIT_READ))], li
 
 
 @router.get("/usage/ai")
-async def ai_usage(p: Annotated[Principal, Depends(require(P.USAGE_READ))]):
+async def ai_usage(request: Request, p: Annotated[Principal, Depends(require(P.USAGE_READ))]):
+    pricing = get_state(request).ai.pricing
     rows = (await p.session.execute(select(AiUsage.provider, AiUsage.model, AiUsage.task, AiUsage.status, func.count(),
                                            func.coalesce(func.sum(AiUsage.input_tokens), 0), func.coalesce(func.sum(AiUsage.output_tokens), 0))
                                     .where(AiUsage.created_at >= func.date_trunc("day", func.now()))
                                     .group_by(AiUsage.provider, AiUsage.model, AiUsage.task, AiUsage.status))).all()
     return {"period": "today", "items": [{"provider": r[0], "model": r[1], "task": r[2], "status": r[3], "calls": r[4],
-                                          "input_tokens": r[5], "output_tokens": r[6]} for r in rows]}
+                                          "input_tokens": r[5], "output_tokens": r[6],
+                                          "cost_usd": estimate_cost(pricing, r[1], int(r[5]), int(r[6])),  # null = no configured price
+                                          "pricing": ({"effective_date": pricing[r[1]].effective_date, "source": pricing[r[1]].source} if r[1] in pricing else None)}
+                                         for r in rows]}
