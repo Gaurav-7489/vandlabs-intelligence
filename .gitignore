@@ -15,3 +15,13 @@ dist/
 coverage/
 playwright-report/
 test-results/
+
+# Runtime/persistence artifacts (never commit)
+dump.rdb
+*.rdb
+*.aof
+appendonlydir/
+*.sqlite
+*.sqlite3
+*.pid
+.redis/
