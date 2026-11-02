@@ -80,4 +80,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None) ->
     api = "/api/v1"
     for r in (identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
         app.include_router(r, prefix=api)
+    if s.auth_mode == "dev":  # unreachable in staging/production: Settings rejects dev mode there
+        from app.identity.dev_auth import router as dev_router
+        app.include_router(dev_router, prefix=api)
     return app

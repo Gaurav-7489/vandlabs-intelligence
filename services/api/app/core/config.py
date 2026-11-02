@@ -68,6 +68,10 @@ class Settings(BaseSettings):
                 raise ValueError("auth_mode=dev is not permitted outside local/test")
             if not (self.oidc_issuer and self.oidc_audience and self.oidc_jwks_url):
                 raise ValueError("OIDC issuer, audience and JWKS URL are required")
+            if any("dev_" in u or "localhost" in u for u in (self.database_url, self.worker_database_url, self.migration_database_url)):
+                raise ValueError("Development database credentials/hosts are not permitted outside local/test")
+            if self.storage_backend == "local":
+                raise ValueError("Local object storage is not permitted outside local/test; configure S3/R2")
         return self
 
     @property
