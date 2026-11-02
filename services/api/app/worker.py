@@ -9,13 +9,17 @@ import socket
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import update
+
 from app.core.config import get_settings
 from app.core.db import Database, make_engine
 from app.core.logging import configure_logging, get_logger
 from app.core.storage import make_storage
-from app.ingestion.pipeline import ingest_document
+from app.ingestion.pipeline import HoldForRetry, ingest_document
+from app.ingestion.scan import make_scanner
 from app.intelligence.service import run_analysis
 from app.jobs import queue
+from app.models import Document
 
 log = get_logger("worker")
 
@@ -25,6 +29,7 @@ class Worker:
         self.s = get_settings()
         self.db = db or Database(make_engine(self.s.worker_database_url, self.s))
         self.storage = make_storage(self.s)
+        self.scanner = make_scanner(self.s)
         self.id = f"{socket.gethostname()}:{os.getpid()}"
         self._stop = asyncio.Event()
 
@@ -41,6 +46,12 @@ class Worker:
                 result = await self._dispatch(session, org_id, kind, payload)
                 await _set_job_tenant_result(session, job_id, result)
             log.info("job_completed", extra={"job_id": str(job_id), "kind": kind})
+        except HoldForRetry as h:
+            async with self.db.tenant_session(org_id) as session:  # persist the visible hold state (handler tx was rolled back)
+                await session.execute(update(Document).where(Document.id == h.document_id).values(**h.fields))
+            async with self.db.bare_session() as s:
+                status = await queue.fail(s, job_id, "held: security scan unavailable")
+            log.warning("job_held", extra={"job_id": str(job_id), "status": status})
         except Exception as e:  # noqa: BLE001 - never crash the loop on a job error
             log.error("job_failed", extra={"job_id": str(job_id), "kind": kind, "err": type(e).__name__})
             async with self.db.bare_session() as s:
@@ -50,7 +61,7 @@ class Worker:
 
     async def _dispatch(self, session: Any, org_id: UUID, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         if kind == "ingest_document":
-            return await ingest_document(session, self.storage, self.s, org_id, UUID(payload["document_id"]))
+            return await ingest_document(session, self.storage, self.scanner, self.s, org_id, UUID(payload["document_id"]))
         if kind == "analyze":
             return await run_analysis(session, self.s, org_id)
         raise ValueError(f"unknown job kind {kind}")

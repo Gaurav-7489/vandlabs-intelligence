@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     max_parse_chars: int = 5_000_000
     max_zip_expansion_ratio: int = 100  # DOCX/XLSX are zip containers: guard against archive bombs
 
+    # Untrusted-file handling
+    parser_timeout_seconds: float = 30.0
+    parser_memory_mb: int = 1024
+    parser_cpu_seconds: int = 20
+    parser_isolate_network: bool = True  # run the parser in its own (empty) network namespace via `unshare -rn` when available
+    scanner_backend: Literal["none", "clamd"] = "none"
+    clamd_host: str = "localhost"
+    clamd_port: int = 3310
+    scan_required: bool = False  # True => files stay unindexed until a scan has actually passed (forced on in staging/production)
+    max_queued_jobs_per_org: int = 500
+
     # AI gateway: providers are configured, never assumed.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-5-5"
@@ -89,6 +100,8 @@ class Settings(BaseSettings):
                 raise ValueError("OIDC client id/secret and session_encryption_key are required")
             if not self.public_base_url.startswith("https://"):
                 raise ValueError("public_base_url must be https outside local/test")
+            if not self.scan_required or self.scanner_backend == "none":
+                raise ValueError("A malware scanner (scanner_backend=clamd, scan_required=true) is required outside local/test")
             if self.storage_backend == "local":
                 raise ValueError("Local object storage is not permitted outside local/test; configure S3/R2")
         return self

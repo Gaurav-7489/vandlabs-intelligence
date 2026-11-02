@@ -21,7 +21,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 def _view(d: Document) -> dict:
-    return {"id": d.id, "filename": d.filename, "type": d.detected_type, "size_bytes": d.size_bytes, "status": d.status,
+    return {"id": d.id, "filename": d.filename, "type": d.detected_type, "size_bytes": d.size_bytes, "status": d.status, "scan_status": d.scan_status,
             "error": d.error, "stats": d.stats, "version": d.version, "created_at": d.created_at, "updated_at": d.updated_at}
 
 

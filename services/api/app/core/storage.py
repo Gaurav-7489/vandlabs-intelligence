@@ -1,7 +1,7 @@
 """Private object storage. Keys are server-generated; user-supplied names are never used as paths."""
 import asyncio
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.core.config import Settings
 
@@ -71,7 +71,7 @@ class S3Storage:
     """S3-compatible storage (Cloudflare R2 in staging/production). Verified at protocol level against a moto S3 server;
     NOT yet verified against a real R2 bucket. Retries/timeouts are bounded; the bucket must be private."""
 
-    def __init__(self, s: Settings, client: object | None = None):
+    def __init__(self, s: Settings, client: Any = None):
         import boto3  # lazy: optional dependency
         from botocore.config import Config
         self.bucket = s.s3_bucket
@@ -81,13 +81,13 @@ class S3Storage:
 
     async def put(self, key: str, data: bytes) -> None:
         try:
-            await asyncio.to_thread(self.client.put_object, Bucket=self.bucket, Key=key, Body=data)  # type: ignore[attr-defined]
+            await asyncio.to_thread(self.client.put_object, Bucket=self.bucket, Key=key, Body=data)
         except Exception as e:  # noqa: BLE001
             raise StorageError(f"put failed: {type(e).__name__}") from None
 
     async def get(self, key: str) -> bytes:
         try:
-            obj = await asyncio.to_thread(self.client.get_object, Bucket=self.bucket, Key=key)  # type: ignore[attr-defined]
+            obj = await asyncio.to_thread(self.client.get_object, Bucket=self.bucket, Key=key)
             return await asyncio.to_thread(obj["Body"].read)
         except Exception as e:  # noqa: BLE001
             if getattr(e, "response", {}).get("Error", {}).get("Code") in ("NoSuchKey", "404"):
@@ -96,7 +96,7 @@ class S3Storage:
 
     async def delete(self, key: str) -> None:
         try:
-            await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)  # type: ignore[attr-defined]
+            await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
         except Exception as e:  # noqa: BLE001
             raise StorageError(f"delete failed: {type(e).__name__}") from None
 

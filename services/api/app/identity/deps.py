@@ -149,7 +149,8 @@ async def get_principal(
         # and "not a member": no tenant enumeration.
         async with state.db.bare_session() as s:
             await audit.record(s, action=denial[0], org_id=None, actor=ident.user.id, outcome="denied", ip=ident.ip, requested_org=str(org_id))
-        raise Forbidden(denial[1], **({"reason": denial[2]} if denial[2] else {}))
+        extra: dict[str, Any] = {"reason": denial[2]} if denial[2] else {}
+        raise Forbidden(denial[1], **extra)
 
 
 def require(perm: P):

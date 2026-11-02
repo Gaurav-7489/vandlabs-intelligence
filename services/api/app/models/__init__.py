@@ -82,6 +82,8 @@ class Document(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     storage_key: Mapped[str] = mapped_column(String(300))
     status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
+    scan_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    scan_detail: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
@@ -259,4 +261,15 @@ class AiUsage(Base):
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0)
     status: Mapped[str] = mapped_column(String(20))
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = ts()
+
+
+class InsightExplanation(Base):
+    __tablename__ = "insight_explanations"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = org_fk()
+    insight_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("insights.id", ondelete="CASCADE"), index=True)
+    explanation: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(100))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = ts()
