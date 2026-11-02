@@ -1,0 +1,7 @@
+-- Run once per cluster as a superuser. Passwords below are LOCAL DEV ONLY; use secret-managed values elsewhere.
+-- vand_owner : owns schema, runs migrations (never used by the running API).
+-- vand_app   : API runtime. NOSUPERUSER NOBYPASSRLS so Row-Level Security applies.
+-- vand_worker: background worker runtime. Same RLS, plus a cross-tenant policy on `jobs` only (claiming work).
+CREATE ROLE vand_owner LOGIN PASSWORD 'dev_owner_pw' CREATEDB;
+CREATE ROLE vand_app LOGIN PASSWORD 'dev_app_pw' NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE vand_worker LOGIN PASSWORD 'dev_worker_pw' NOSUPERUSER NOBYPASSRLS;
