@@ -61,7 +61,7 @@ class Settings(BaseSettings):
 
     # Untrusted-file handling
     parser_timeout_seconds: float = 30.0
-    parser_memory_mb: int = 1024
+    parser_memory_mb: int = 1024  # additional memory budget for parsing, on top of the interpreter/library baseline
     parser_cpu_seconds: int = 20
     parser_isolate_network: bool = True  # run the parser in its own (empty) network namespace via `unshare -rn` when available
     scanner_backend: Literal["none", "clamd"] = "none"

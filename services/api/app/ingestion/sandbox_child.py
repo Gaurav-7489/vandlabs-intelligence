@@ -7,10 +7,19 @@ import sys
 
 def _lock_down(cpu: int, mem_mb: int) -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-    resource.setrlimit(resource.RLIMIT_AS, (mem_mb * 1024 * 1024, mem_mb * 1024 * 1024))
+    cap = 2 * 1024**3  # generous hard cap while interpreter + parser libraries import; tightened to a budget afterwards
+    resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
     resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def _apply_memory_budget(mem_mb: int) -> None:
+    """After imports: allow only `mem_mb` of ADDITIONAL address space for parsing. Independent of interpreter/library baseline size."""
+    pages = int(open("/proc/self/statm").read().split()[0])  # noqa: SIM115 - tiny procfs read
+    current = pages * resource.getpagesize()
+    limit = min(current + mem_mb * 1024 * 1024, 2 * 1024**3)
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
 
 def _block_network() -> None:
@@ -34,6 +43,8 @@ def main() -> int:
             from app.ingestion.parsers import ParseLimitExceeded, parse
             from app.ingestion.sandbox import encode
         _block_network()
+        if kind != "__netprobe__":
+            _apply_memory_budget(mem)
         if kind == "__netprobe__":  # test hook: prove the sandbox cannot open network connections
             try:
                 socket.create_connection(("127.0.0.1", 9), 1)
