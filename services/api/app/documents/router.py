@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import delete, func, select
 
 from app.audit import service as audit
-from app.core.errors import NotFound, PayloadTooLarge
+from app.core.errors import NotFound, PayloadTooLarge, Unavailable
 from app.core.pagination import page
 from app.core.state import AppState, get_state
+from app.core.storage import StorageError, TenantStorage
 from app.identity.deps import Principal, require
 from app.identity.permissions import P
 from app.ingestion.validate import detect_type, sanitize_filename
@@ -43,7 +44,10 @@ async def upload(file: Annotated[UploadFile, File()], p: Annotated[Principal, De
         return {**_view(dup), "duplicate": True}
     doc_id = uuid.uuid4()
     key = f"{p.org_id}/{doc_id}"  # server-generated; user filename never touches storage paths
-    await state.storage.put(key, data)
+    try:
+        await TenantStorage(state.storage, p.org_id).put(key, data)
+    except StorageError:
+        raise Unavailable("File storage is temporarily unavailable", headers={"Retry-After": "10"}) from None
     doc = Document(id=doc_id, org_id=p.org_id, filename=name, detected_type=kind, size_bytes=len(data), sha256=sha,
                    storage_key=key, status="queued", uploaded_by=p.user.id)
     p.session.add(doc)
@@ -96,7 +100,10 @@ async def delete_document(doc_id: UUID, p: Annotated[Principal, Depends(require(
     await p.session.execute(delete(Task).where(Task.source_document_id == d.id, Task.origin == "imported"))
     d.deleted_at = func.now()
     d.status = "deleted"
-    await state.storage.delete(d.storage_key)
+    try:
+        await TenantStorage(state.storage, p.org_id).delete(d.storage_key)
+    except StorageError:
+        pass  # DB state is authoritative; an orphaned object is reaped by the lifecycle job (see ops docs)
     await queue.enqueue(p.session, org_id=p.org_id, kind="analyze", payload={}, idempotency_key=f"analyze:del:{d.id}")
     await audit.record(p.session, action="document.deleted", org_id=p.org_id, actor=p.user.id, resource_type="document", resource_id=d.id, ip=p.ip)
 

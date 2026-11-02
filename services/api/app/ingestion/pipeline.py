@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.core.storage import Storage
+from app.core.storage import Storage, TenantStorage
 from app.ingestion.extract import extract
 from app.ingestion.parsers import ParseLimitExceeded, parse
 from app.jobs import queue
@@ -24,7 +24,7 @@ async def ingest_document(session: AsyncSession, storage: Storage, s: Settings, 
     doc.status = "processing"
     await session.flush()
     try:
-        data = await storage.get(doc.storage_key)
+        data = await TenantStorage(storage, org_id).get(doc.storage_key)
         parsed = parse(doc.detected_type, data, s)
     except ParseLimitExceeded as e:
         doc.status, doc.error = "failed", f"Parsing limit exceeded: {e}"

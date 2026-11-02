@@ -11,6 +11,7 @@ from app.ai.gateway import AIGateway
 from app.audit.router import router as audit_router
 from app.core.config import Settings, get_settings
 from app.core.db import Database, make_engine
+from app.core.dbsafety import check_role_safety
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging, get_logger, request_id_var
 from app.core.ratelimit import RateLimiter
@@ -46,6 +47,12 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = Database(make_engine(s.database_url, s))
+        if s.env in ("staging", "production"):  # refuse to start in a known-unsafe database configuration
+            async with db.bare_session() as probe:
+                safety = await check_role_safety(probe)
+            if not safety.ok:
+                await db.dispose()
+                raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
         r = aioredis.from_url(s.redis_url, decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
         oidc = OidcClient(s, oidc_http) if s.auth_mode == "oidc" else None
         app.state.vand = AppState(settings=s, db=db, limiter=RateLimiter(s.redis_url), verifier=TokenVerifier(s),
