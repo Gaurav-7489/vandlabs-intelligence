@@ -128,6 +128,22 @@ async def change_role(member_id: UUID, body: RoleIn, p: Annotated[Principal, Dep
     return {"id": m.id, "role": m.role}
 
 
+@router.post("/members/{member_id}/revoke-sessions")
+async def revoke_member_sessions(member_id: UUID, p: Annotated[Principal, Depends(require(P.MEMBERS_WRITE))],
+                                 state: Annotated[AppState, Depends(get_state)]):
+    """Ends every active browser session of a member (e.g. after suspected compromise)."""
+    row = (await p.session.execute(select(Membership, User).join(User, User.id == Membership.user_id).where(Membership.id == member_id))).first()
+    if row is None:
+        raise NotFound("Member not found")
+    m, u = row
+    if m.role in ("owner", "admin") and p.role != "owner":
+        raise Forbidden("Only an owner can revoke owner or admin sessions")
+    n = await state.sessions.delete_all(u.subject) if u.subject else 0
+    await audit.record(p.session, action="member.sessions_revoked", org_id=p.org_id, actor=p.user.id, resource_type="membership",
+                       resource_id=m.id, ip=p.ip, sessions=n)
+    return {"revoked": n}
+
+
 @router.delete("/members/{member_id}", status_code=204)
 async def deactivate_member(member_id: UUID, p: Annotated[Principal, Depends(require(P.MEMBERS_WRITE))]):
     m = (await p.session.execute(select(Membership).where(Membership.id == member_id).with_for_update())).scalar_one_or_none()

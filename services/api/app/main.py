@@ -2,6 +2,8 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,7 +19,10 @@ from app.core.storage import make_storage
 from app.decisions.router import router as decisions_router
 from app.documents.router import router as documents_router
 from app.health.router import router as health_router
+from app.identity.auth_router import router as auth_router
+from app.identity.oidc import OidcClient
 from app.identity.router import router as identity_router
+from app.identity.sessions import SessionStore
 from app.identity.tokens import TokenVerifier
 from app.intelligence.router import router as intelligence_router
 from app.search.router import router as search_router
@@ -34,17 +39,20 @@ SECURITY_HEADERS = {
 }
 
 
-def create_app(settings: Settings | None = None, ai: AIGateway | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oidc_http: httpx.AsyncClient | None = None) -> FastAPI:
     s = settings or get_settings()
     configure_logging()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = Database(make_engine(s.database_url, s))
+        r = aioredis.from_url(s.redis_url, decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
+        oidc = OidcClient(s, oidc_http) if s.auth_mode == "oidc" else None
         app.state.vand = AppState(settings=s, db=db, limiter=RateLimiter(s.redis_url), verifier=TokenVerifier(s),
-                                  storage=make_storage(s), ai=ai or AIGateway(s))
+                                  storage=make_storage(s), ai=ai or AIGateway(s), redis=r, oidc=oidc, sessions=SessionStore(r, s, oidc))
         yield
         await app.state.vand.limiter.close()
+        await r.aclose()
         await db.dispose()
 
     app = FastAPI(title="VandLabs Intelligence API", version="0.1.0", lifespan=lifespan,
@@ -52,7 +60,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None) ->
                   openapi_url=None if s.env == "production" else "/openapi.json")
     install_error_handlers(app)
     app.add_middleware(CORSMiddleware, allow_origins=s.cors_origin_list, allow_methods=["GET", "POST", "PATCH", "DELETE"],
-                       allow_headers=["authorization", "content-type", "x-org-id", "idempotency-key"], allow_credentials=False,
+                       allow_headers=["authorization", "content-type", "x-org-id", "idempotency-key", "x-csrf-token"], allow_credentials=False,
                        expose_headers=["x-request-id", "retry-after"])
 
     @app.middleware("http")
@@ -78,7 +86,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None) ->
 
     app.include_router(health_router)
     api = "/api/v1"
-    for r in (identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
+    for r in (auth_router, identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
         app.include_router(r, prefix=api)
     if s.auth_mode == "dev":  # unreachable in staging/production: Settings rejects dev mode there
         from app.identity.dev_auth import router as dev_router

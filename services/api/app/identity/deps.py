@@ -1,7 +1,8 @@
 """Server-side identity + tenant resolution. The browser supplies only a bearer token and a *requested* org id;
 role and membership are always loaded from the database."""
+import hmac
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, Header, Request
@@ -49,14 +50,40 @@ class Principal:
             raise Forbidden("You do not have permission to perform this action")
 
 
+UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _check_csrf(request: Request, state: AppState, rec: dict[str, Any]) -> None:
+    """Cookie-authenticated unsafe requests need BOTH an allowed Origin and the per-session CSRF token. (CORS is not CSRF protection.)"""
+    origin = request.headers.get("origin", "").rstrip("/")
+    token = request.headers.get("x-csrf-token", "")
+    if origin not in state.settings.allowed_origins or not hmac.compare_digest(token, rec["csrf"]):
+        raise Forbidden("CSRF validation failed")
+
+
+async def _claims_from_request(request: Request, state: AppState) -> tuple[Claims, dict[str, Any] | None]:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        tok = auth[7:].strip()
+        if state.settings.auth_mode == "dev":
+            return state.verifier.verify(tok), None
+        assert state.oidc is not None
+        return await state.oidc.verify_access_jwt(tok), None
+    sid = request.cookies.get(state.settings.session_cookie_name)
+    if sid and state.settings.auth_mode == "oidc":
+        rec = await state.sessions.get(sid)
+        if rec is not None:
+            if request.method in UNSAFE:
+                _check_csrf(request, state, rec)
+            request.state.session_id = sid
+            return Claims(subject=rec["sub"], email=rec["email"], email_verified=rec["email_verified"], name=rec["name"], amr=tuple(rec["amr"])), rec
+    raise Unauthorized("Authentication required")
+
+
 async def get_identity(request: Request, state: Annotated[AppState, Depends(get_state)]) -> Identity:
     ip = client_ip(request, state.settings.trusted_proxy_hops)
-    auth = request.headers.get("authorization", "")
-    if not auth.lower().startswith("bearer "):
-        await state.limiter.hit("auth_failure", f"ip:{ip}")
-        raise Unauthorized("Authentication required")
     try:
-        claims = state.verifier.verify(auth[7:].strip())
+        claims, _rec = await _claims_from_request(request, state)
     except Unauthorized:
         await state.limiter.hit("auth_failure", f"ip:{ip}")
         async with state.db.bare_session() as s:
@@ -78,7 +105,7 @@ async def get_identity(request: Request, state: Annotated[AppState, Depends(get_
                 raise Unauthorized("Account conflict")
             user = User(subject=claims.subject, email=claims.email, display_name=claims.name)
             s.add(user)
-            await s.flush()
+        await s.flush()  # persist the subject binding BEFORE detaching the object
         s.expunge(user)
     await state.limiter.hit("read" if request.method in ("GET", "HEAD") else "write", f"user:{user.id}")
     return Identity(user=user, claims=claims, ip=ip)
@@ -106,14 +133,14 @@ async def get_principal(
         org_id = UUID(x_org_id)
     except ValueError:
         raise Forbidden("Invalid organization") from None
-    denial: tuple[str, str] | None = None
+    denial: tuple[str, str, str | None] | None = None
     async with state.db.tenant_session(org_id) as session:
         m = (await session.execute(select(Membership).where(
             Membership.org_id == org_id, Membership.user_id == ident.user.id, Membership.status == "active"))).scalar_one_or_none()
         if m is None:
-            denial = ("authz.org_denied", "You are not a member of this organization")
+            denial = ("authz.org_denied", "You are not a member of this organization", None)
         elif state.settings.require_mfa_for_privileged and m.role in PRIVILEGED_ROLES and not ident.claims.mfa:
-            denial = ("authz.mfa_required", "Multi-factor authentication required for this role")
+            denial = ("authz.mfa_required", "Multi-factor authentication required for this role", "mfa_required")
         else:
             request.state.org_id = org_id
             yield Principal(user=ident.user, org_id=org_id, role=m.role, session=session, ip=ident.ip)
@@ -122,7 +149,7 @@ async def get_principal(
         # and "not a member": no tenant enumeration.
         async with state.db.bare_session() as s:
             await audit.record(s, action=denial[0], org_id=None, actor=ident.user.id, outcome="denied", ip=ident.ip, requested_org=str(org_id))
-        raise Forbidden(denial[1])
+        raise Forbidden(denial[1], **({"reason": denial[2]} if denial[2] else {}))
 
 
 def require(perm: P):

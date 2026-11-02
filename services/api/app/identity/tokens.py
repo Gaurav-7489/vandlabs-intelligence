@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
-from jwt import PyJWKClient
 
 from app.core.config import Settings
 from app.core.errors import Unauthorized
@@ -25,20 +24,14 @@ class Claims:
 class TokenVerifier:
     def __init__(self, settings: Settings):
         self.s = settings
-        self._jwks = PyJWKClient(settings.oidc_jwks_url, cache_keys=True, lifespan=3600) if settings.auth_mode == "oidc" else None
 
     def verify(self, token: str) -> Claims:
+        """DEV MODE ONLY (HS256). In oidc mode bearer tokens are verified by OidcClient.verify_access_jwt."""
+        if self.s.auth_mode != "dev":
+            raise Unauthorized("Invalid or expired credentials")
         try:
-            if self.s.auth_mode == "dev":
-                data: dict[str, Any] = jwt.decode(
-                    token, self.s.dev_jwt_secret, algorithms=["HS256"], audience="vand-dev",
-                    options={"require": ["exp", "sub"]})
-            else:
-                assert self._jwks is not None
-                key = self._jwks.get_signing_key_from_jwt(token).key
-                data = jwt.decode(
-                    token, key, algorithms=["RS256", "ES256"], audience=self.s.oidc_audience, issuer=self.s.oidc_issuer,
-                    options={"require": ["exp", "sub", "iss", "aud"]})
+            data: dict[str, Any] = jwt.decode(token, self.s.dev_jwt_secret, algorithms=["HS256"], audience="vand-dev",
+                                              options={"require": ["exp", "sub"]})
         except jwt.PyJWTError:
             raise Unauthorized("Invalid or expired credentials") from None
         amr = data.get("amr") or []

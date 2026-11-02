@@ -48,6 +48,7 @@ POLICIES: dict[str, Policy] = {p.name: p for p in [
     Policy("ai", 10, 60, fail_closed=True),
     Policy("upload", 10, 3600, fail_closed=True),
     Policy("auth_failure", 5, 900, fail_closed=True),
+    Policy("auth_flow", 30, 60, fail_closed=True),
     Policy("org_read", 3000, 60),
 ]}
 

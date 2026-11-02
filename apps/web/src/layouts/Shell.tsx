@@ -71,7 +71,7 @@ export default function Shell() {
           </div>
           <span className="badge badge-accent hidden sm:inline-flex">{membership?.role}</span>
           <button className="btn" onClick={toggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? "☀" : "☾"}</button>
-          <button className="btn" onClick={signOut}>Sign out</button>
+          <button className="btn" onClick={() => void signOut()}>Sign out</button>
         </div>
         <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8" tabIndex={-1}>
           <Boundary key={loc.pathname}>

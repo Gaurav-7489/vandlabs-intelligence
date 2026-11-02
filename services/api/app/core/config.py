@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
+    # Backend-for-Frontend session flow (Authorization Code + PKCE, confidential client).
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_authorize_url: str = ""  # optional: discovered from {issuer}/.well-known/openid-configuration when empty
+    oidc_token_url: str = ""
+    oidc_end_session_url: str = ""
+    oidc_scopes: str = "openid profile email offline_access"
+    oidc_extra_authorize_params: str = ""  # e.g. "audience=https://api.vandlabs.example" (Auth0)
+    oidc_mfa_amr_values: str = "mfa,otp,hwk"
+    public_base_url: str = "http://localhost:5173"  # browser-visible origin (same-origin proxy to /api)
+    session_cookie_name: str = "vand_session"
+    session_absolute_ttl_seconds: int = 8 * 3600
+    session_idle_ttl_seconds: int = 1800
+    session_revalidate_seconds: int = 900  # how often the IdP is asked whether the session is still valid
+    session_encryption_key: str = ""  # Fernet key; required in staging/production (protects refresh tokens in Redis)
     dev_jwt_secret: str = "dev-only-secret-change-me-32-bytes-min!!"  # noqa: S105 - dev mode is rejected in staging/production
     require_mfa_for_privileged: bool = True
 
@@ -70,9 +85,21 @@ class Settings(BaseSettings):
                 raise ValueError("OIDC issuer, audience and JWKS URL are required")
             if any("dev_" in u or "localhost" in u for u in (self.database_url, self.worker_database_url, self.migration_database_url)):
                 raise ValueError("Development database credentials/hosts are not permitted outside local/test")
+            if not (self.oidc_client_id and self.oidc_client_secret and self.session_encryption_key):
+                raise ValueError("OIDC client id/secret and session_encryption_key are required")
+            if not self.public_base_url.startswith("https://"):
+                raise ValueError("public_base_url must be https outside local/test")
             if self.storage_backend == "local":
                 raise ValueError("Local object storage is not permitted outside local/test; configure S3/R2")
         return self
+
+    @property
+    def cookie_secure(self) -> bool:
+        return self.env in ("staging", "production")
+
+    @property
+    def allowed_origins(self) -> set[str]:
+        return {self.public_base_url.rstrip("/"), *self.cors_origin_list}
 
     @property
     def cors_origin_list(self) -> list[str]:

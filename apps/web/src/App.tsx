@@ -33,8 +33,17 @@ const router = createBrowserRouter([{
 }]);
 
 function Gate() {
-  const { me } = useSession();
-  if (!me) return <Login />;
+  const { me, status, mfaRequired, signOut } = useSession();
+  if (status === "loading") return <main className="grid min-h-screen place-items-center" role="status" aria-label="Restoring session"><div className="skeleton h-10 w-48" /></main>;
+  if (status === "anon" || !me) return <Login />;
+  if (mfaRequired) {
+    return (
+      <main className="grid min-h-screen place-items-center p-6"><div className="card max-w-sm space-y-4 p-6 text-center">
+        <p className="font-display text-2xl">Multi-factor authentication required</p>
+        <p className="text-sm text-ink2">Your role requires a session verified with MFA. Sign in again and complete the MFA challenge.</p>
+        <a className="btn btn-primary w-full" href="/api/v1/auth/login?reauth=true">Verify with MFA</a>
+        <button className="btn w-full" onClick={() => void signOut()}>Sign out</button></div></main>);
+  }
   if (me.memberships.length === 0) {
     return <main className="grid min-h-screen place-items-center p-6 text-center"><p className="max-w-sm">Your account is not a member of any organization yet. Ask an organization owner to add {me.user.email}.</p></main>;
   }

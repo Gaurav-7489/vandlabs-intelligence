@@ -8,7 +8,11 @@ export class ApiError extends Error {
 
 let token: string | null = null;
 let orgId: string | null = null;
+let csrf: string | null = null;
 let onUnauthorized: (() => void) | null = null;
+let onMfaRequired: (() => void) | null = null;
+export const setCsrf = (c: string | null) => { csrf = c; };
+export const setMfaHandler = (fn: () => void) => { onMfaRequired = fn; };
 export const setToken = (t: string | null) => { token = t; };
 export const setOrg = (o: string | null) => { orgId = o; };
 export const setUnauthorizedHandler = (fn: () => void) => { onUnauthorized = fn; };
@@ -22,15 +26,18 @@ export async function api<T>(path: string, opts: Opts = {}): Promise<T> {
   const headers: Record<string, string> = { ...(opts.headers ?? {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (orgId && opts.org !== false) headers["X-Org-ID"] = orgId;
+  const unsafe = (opts.method ?? "GET") !== "GET";
+  if (unsafe && csrf) headers["X-CSRF-Token"] = csrf; // cookie session: echo the per-session CSRF token (Origin is sent by the browser)
   let body: BodyInit | undefined;
   if (opts.form) body = opts.form;
   else if (opts.body !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(opts.body); }
-  const res = await fetch(url, { method: opts.method ?? "GET", headers, body, signal: opts.signal });
+  const res = await fetch(url, { method: opts.method ?? "GET", headers, body, signal: opts.signal, credentials: "same-origin" });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const e = data?.error ?? {};
     if (res.status === 401 && onUnauthorized) onUnauthorized();
+    if (res.status === 403 && e.reason === "mfa_required" && onMfaRequired) onMfaRequired();
     throw new ApiError(res.status, e.code ?? "error", e.message ?? res.statusText, Number(res.headers.get("retry-after")) || undefined, e.request_id);
   }
   return data as T;

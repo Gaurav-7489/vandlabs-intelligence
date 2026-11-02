@@ -128,3 +128,10 @@ async def test_error_responses_do_not_leak_internals(client, make_env):
     r = await client.get(f"{API}/documents/not-a-uuid", headers=env.h("owner"))
     assert r.status_code == 422 and "Traceback" not in r.text and "sqlalchemy" not in r.text.lower()
     assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store" and "x-request-id" in r.headers
+
+
+async def test_invited_user_subject_binding_is_persisted(client, make_env, owner_sql):
+    env = await make_env("persist")
+    await client.get(f"{API}/me", headers=env.h("staff"))
+    row = owner_sql.execute(text("SELECT subject FROM users WHERE email = :e"), {"e": env.users["staff"]}).one()
+    assert row[0] == f"sub-{env.users['staff']}"
