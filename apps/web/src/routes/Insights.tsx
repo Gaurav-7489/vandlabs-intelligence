@@ -1,17 +1,20 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge, Card, Empty, ErrorPanel, PageHeader, SkeletonRows, sevTone, useToast, errorText } from "../components/ui";
 import { api, type Decision, type Insight } from "../lib/api";
-import { humanize, fmtDate } from "../lib/format";
+import { humanize, fmtDate, fmtDateTime } from "../lib/format";
 import { useCursorList } from "../lib/useCursorList";
-import { useSession } from "../lib/session";
+import { useOrgKey, useSession } from "../lib/session";
 
 function Detail({ ins }: { ins: Insight }) {
   const qc = useQueryClient();
   const nav = useNavigate();
   const toast = useToast();
   const { can } = useSession();
+  const org = useOrgKey();
+  const history = useQuery({ queryKey: [org, "insights", "explanations", ins.id], enabled: !!ins.explanation,
+    queryFn: ({ signal }) => api<{ items: { id: string; explanation: string; source: string; created_at: string }[] }>(`/insights/${ins.id}/explanations`, { signal }) });
   const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === "insights" });
   const explain = useMutation({ mutationFn: () => api<Insight>(`/insights/${ins.id}/explain`, { method: "POST" }), onSuccess: () => { toast("ok", "Explanation generated."); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
   const decide = useMutation({ mutationFn: () => api<Decision>("/decisions", { method: "POST", body: { insight_id: ins.id } }), onSuccess: (d) => { toast("ok", "Decision created."); nav(`/decisions/${d.id}`); }, onError: (e) => toast("error", errorText(e)) });
@@ -36,6 +39,9 @@ function Detail({ ins }: { ins: Insight }) {
           <p className="whitespace-pre-line">{ins.explanation}</p>
           <p className="mt-2 text-xs text-ink2">{ins.explanation_source === "deterministic" ? "Generated from the stored evidence (no AI model used)." : `AI-generated, validated against the evidence above (${ins.explanation_source}).`}</p>
         </div>)}
+      {history.data && history.data.items.length > 1 && (
+        <details className="rounded-lg border border-line bg-surface p-3"><summary className="cursor-pointer text-xs font-medium text-ink2">Earlier explanations ({history.data.items.length - 1})</summary>
+          <ul className="mt-2 space-y-2">{history.data.items.slice(1).map((h) => <li key={h.id} className="text-xs text-ink2"><span className="font-mono">{h.source}</span> · {fmtDateTime(h.created_at)}<p className="mt-1 whitespace-pre-line text-ink">{h.explanation}</p></li>)}</ul></details>)}
       <div className="flex flex-wrap gap-2">
         {can("ai.ask") && <button className="btn" disabled={explain.isPending} onClick={() => explain.mutate()}>{explain.isPending ? "Explaining…" : "Explain"}</button>}
         {can("decisions.write") && <button className="btn btn-primary" disabled={decide.isPending} onClick={() => decide.mutate()}>Create decision</button>}

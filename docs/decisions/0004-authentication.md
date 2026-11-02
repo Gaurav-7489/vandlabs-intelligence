@@ -1,5 +1,4 @@
-# ADR-0004: Managed OIDC authentication (provider not yet selected)
-**Status:** partially implemented. The API verifies RS256/ES256 JWTs from a configurable OIDC issuer/JWKS and reads `amr` for MFA. **No identity provider has been
-chosen or configured**; the provider decision (organizations, MFA, session model) is open and requires the owner. Local development uses an HS256 dev-token endpoint that is
-mounted only when `VAND_AUTH_MODE=dev` and is rejected by config validation in staging/production.
-**Known gap:** the SPA keeps the token in memory (reload = re-login). Production should use an authorization-code + PKCE flow or a BFF with HttpOnly session cookies.
+# ADR-0004: Managed OIDC authentication via a same-origin BFF
+**Status:** implemented and verified against a local test OIDC issuer; **not yet verified against Auth0** (no tenant available). Auth0 is the chosen provider (setup: docs/operations/auth0-setup.md).
+**Design:** Authorization Code + PKCE (S256), state (single-use, server-held) and nonce, confidential client. The API completes the flow, validates the ID token (alg allowlist RS256/ES256, iss, aud=client id, exp, nonce, JWKS with rotation), and issues an opaque HttpOnly SameSite=Lax session cookie backed by a Fernet-encrypted Redis record (sliding idle + absolute TTL, periodic refresh-token-rotation revalidation, per-user revocation). Cookie writes require Origin allowlist + per-session CSRF token. The database remains the source of truth for membership/role; email-based account merging is refused; invited users bind only with `email_verified=true`. Bearer access JWTs (audience-checked) are accepted for machine clients. Dev HS256 sign-in is mounted only when `VAND_AUTH_MODE=dev`.
+**Alternatives rejected:** tokens in SPA memory/storage (refresh = re-login or XSS exposure); custom password auth.

@@ -51,10 +51,10 @@ export interface Page<T> { items: T[]; next_cursor: string | null }
 export interface Evidence { type: "commitment" | "task"; id: string; key: string; document_id: string | null; locator: string | null; facts: Record<string, unknown> }
 export interface Insight { id: string; rule: string; severity: Severity; status: string; title: string; summary: string; evidence: Evidence[];
   uncertainty: string; recommended_step: string; explanation: string | null; explanation_source: string | null; created_at: string }
-export interface Doc { id: string; filename: string; type: string; size_bytes: number; status: string; error: string | null; stats: Record<string, unknown>; created_at: string; duplicate?: boolean }
+export interface Doc { id: string; filename: string; type: string; size_bytes: number; status: string; scan_status: string; error: string | null; stats: Record<string, unknown>; created_at: string; duplicate?: boolean }
 export interface Decision { id: string; insight_id: string | null; title: string; business_question: string; observation: string; evidence: Evidence[];
   alternatives: { option: string; note: string }[]; recommended_action: { type: string; title: string }; risks: string; success_criteria: string;
-  state: string; requested_by: string; created_at: string;
+  state: string; requested_by: string; approver_user_id: string | null; created_at: string;
   approvals?: { id: string; action: string; comment: string; created_at: string; actor_user_id: string }[];
   executions?: { id: string; status: string; verified: boolean; result: Record<string, string>; error: string | null }[];
   outcomes?: { id: string; result: string; notes: string; created_at: string }[] }

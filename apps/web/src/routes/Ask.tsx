@@ -5,7 +5,9 @@ import { api, type AskResult } from "../lib/api";
 
 export default function Ask() {
   const [q, setQ] = useState("");
-  const m = useMutation({ mutationFn: (question: string) => api<AskResult>("/intelligence/ask", { method: "POST", body: { question } }) });
+  const [history, setHistory] = useState<{ q: string; r: AskResult }[]>([]); // this browser session only; nothing is stored server-side
+  const m = useMutation({ mutationFn: (question: string) => api<AskResult>("/intelligence/ask", { method: "POST", body: { question } }),
+    onSuccess: (r, question) => setHistory((h) => [{ q: question, r }, ...h].slice(0, 10)) });
   const submit = (e: FormEvent) => { e.preventDefault(); if (q.trim().length >= 3) m.mutate(q.trim()); };
   const r = m.data;
   return (
@@ -31,6 +33,9 @@ export default function Ask() {
                 <li key={p.ref} className="px-4 py-3 text-sm"><p><Badge>{p.ref}</Badge> <span className="line-clamp-3">{p.text}</span></p><p className="mt-1 text-xs text-ink2">{p.filename} · {p.locator}</p></li>))}</ul></Card>)}
           </div>)}
       </div>
+      {history.length > 1 && (
+        <Card title="Earlier in this session" className="mt-4"><ul className="divide-y divide-line">{history.slice(1).map((h, i) => (
+          <li key={i} className="px-4 py-3 text-sm"><p className="font-medium">{h.q}</p><p className="line-clamp-2 text-ink2">{h.r.answer ?? h.r.note ?? "No answer"}</p></li>))}</ul></Card>)}
       {m.isError && <p className="sr-only">{errorText(m.error)}</p>}
     </>
   );

@@ -4,6 +4,12 @@ import { Boundary, SkeletonRows } from "../components/ui";
 import { useSession } from "../lib/session";
 import { useTheme } from "../lib/theme";
 
+const PREFETCH: Record<string, () => Promise<unknown>> = {
+  "/": () => import("../routes/Overview"), "/ask": () => import("../routes/Ask"), "/knowledge": () => import("../routes/Knowledge"),
+  "/insights": () => import("../routes/Insights"), "/decisions": () => import("../routes/Decisions"), "/tasks": () => import("../routes/Tasks"),
+  "/integrations": () => import("../routes/Integrations"), "/admin": () => import("../routes/Admin"),
+};
+
 const NAV: { to: string; label: string; icon: string; perm?: string }[] = [
   { to: "/", label: "Overview", icon: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
   { to: "/ask", label: "Ask Intelligence", icon: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z", perm: "ai.ask" },
@@ -36,7 +42,7 @@ export default function Shell() {
   const nav = (
     <nav aria-label="Primary" className="flex flex-col gap-1">
       {NAV.filter((n) => !n.perm || can(n.perm)).map((n) => (
-        <NavLink key={n.to} to={n.to} end={n.to === "/"} className="nav-link"><Icon d={n.icon} />{n.label}</NavLink>
+        <NavLink key={n.to} to={n.to} end={n.to === "/"} className="nav-link" onMouseEnter={() => void PREFETCH[n.to]?.()} onFocus={() => void PREFETCH[n.to]?.()}><Icon d={n.icon} />{n.label}</NavLink>
       ))}
     </nav>
   );
@@ -69,6 +75,7 @@ export default function Shell() {
               </select>
             ) : <p className="truncate text-sm font-medium">{membership?.org_name}</p>}
           </div>
+          <span className="hidden max-w-[14rem] truncate text-xs text-ink2 md:inline" title={me?.user.email}>{me?.user.email}</span>
           <span className="badge badge-accent hidden sm:inline-flex">{membership?.role}</span>
           <button className="btn" onClick={toggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? "☀" : "☾"}</button>
           <button className="btn" onClick={() => void signOut()}>Sign out</button>

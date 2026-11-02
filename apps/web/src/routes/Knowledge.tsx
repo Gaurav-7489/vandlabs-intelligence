@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type DragEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { Badge, Card, Empty, ErrorPanel, PageHeader, SkeletonRows, stateTone, useToast, errorText } from "../components/ui";
 import { api, type Doc } from "../lib/api";
 import { fmtBytes, fmtDateTime, humanize } from "../lib/format";
@@ -44,7 +44,7 @@ function Documents() {
                 {list.items.map((d) => (
                   <tr key={d.id} className="enter">
                     <td className="td"><p className="font-medium">{d.filename}</p><p className="text-xs text-ink2">{d.type.toUpperCase()} · {fmtBytes(d.size_bytes)}</p></td>
-                    <td className="td"><Badge tone={stateTone(d.status)}>{humanize(d.status)}</Badge>{d.error && <p className="mt-1 max-w-xs text-xs text-ink2">{d.error}</p>}</td>
+                    <td className="td"><Badge tone={stateTone(d.status)}>{humanize(d.status)}</Badge>{" "}<Badge tone={d.scan_status === "clean" ? "ok" : d.scan_status === "infected" ? "high" : undefined}>{(d.scan_status ?? "pending") === "not_performed" ? "Not scanned" : `Scan: ${humanize(d.scan_status ?? "pending")}`}</Badge>{d.error && <p className="mt-1 max-w-xs text-xs text-ink2">{d.error}</p>}</td>
                     <td className="td hidden text-xs text-ink2 sm:table-cell">{typeof d.stats.commitments === "number" ? `${d.stats.commitments} commitments · ${d.stats.tasks} tasks` : "—"}</td>
                     <td className="td hidden text-xs text-ink2 md:table-cell">{fmtDateTime(d.created_at)}</td>
                   </tr>))}
@@ -62,6 +62,7 @@ function Search() {
   const { can } = useSession();
   const [term, setTerm] = useState("");
   const [q, setQ] = useState("");
+  useEffect(() => { const t = setTimeout(() => setQ(term.trim()), 350); return () => clearTimeout(t); }, [term]); // debounce: one request per pause, stale ones are aborted by react-query
   const res = useQuery({ queryKey: [org, "search", q], enabled: q.length >= 2, queryFn: ({ signal }) => api<{ items: { chunk_id: string; filename: string; locator: string; text: string }[] }>("/search", { params: { q }, signal }) });
   if (!can("search.read")) return null;
   const submit = (e: FormEvent) => { e.preventDefault(); setQ(term.trim()); };

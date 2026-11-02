@@ -1,31 +1,23 @@
-# Deployment (preparation only — nothing here has been deployed or verified)
+# Deployment (configuration prepared; NOTHING is deployed or externally verified)
 
-## Targets
-Frontend: Cloudflare (Workers static assets or Pages) serving `apps/web/dist`. API + worker: containers on a Python-capable host with a managed load balancer
-(host not yet chosen). Database: Neon PostgreSQL. Objects: Cloudflare R2 (private bucket). Redis: managed instance (required for rate limiting; not optional).
+Targets: Cloudflare Worker + static assets (`apps/web/wrangler.jsonc`, `worker/index.ts`), Render blueprint (`render.yaml`: API, worker, Key Value, private ClamAV), Neon Postgres, Cloudflare R2, Auth0 ([setup](auth0-setup.md)). Creating these resources **creates billable services and requires account owner authorization**.
 
 ## Order of operations
-1. Create DB; run `infra/database/roles.sql` equivalent with **secret-managed passwords**; run `alembic upgrade head` as `vand_owner`.
-2. Provision first platform admin: `python -m app.cli create-platform-admin <email>` (run with the migration URL).
-3. Deploy API (`uvicorn app.main:create_app --factory`) with `VAND_ENV=production`; deploy ≥1 worker (`python -m app.worker`). Both are stateless; scale horizontally.
-4. Health: `GET /healthz` (liveness), `GET /readyz` (DB + Redis; 503 when degraded).
-5. Build frontend with `npm run build`; configure Cloudflare to proxy `/api/*` to the API origin; restrict the origin to Cloudflare IPs.
+1. **Neon:** create staging project/database. As owner run `infra/database/roles.sql` equivalent with strong secret-managed passwords (plain roles via SQL, see ADR-0006). Record direct (migration) and pooled (runtime) URLs.
+2. **R2:** private bucket + scoped token. **Auth0:** per auth0-setup.md. **Render:** apply blueprint, fill every `sync: false` variable.
+3. First deploy runs `alembic upgrade head` (preDeploy, owner URL). Create the first platform admin once: `python -m app.cli create-platform-admin <email>` (run as a Render job/shell with the migration URL).
+4. API refuses to start if: dev auth, dev DB hosts/credentials, local storage, missing OIDC/session/origin secrets, scanner not required, or an unsafe DB role. `/readyz` reports `database`, `redis`, `db_role`.
+5. `wrangler secret put ORIGIN_AUTH_SECRET` (same value as `VAND_ORIGIN_AUTH_SECRET`), set `API_ORIGIN`, `wrangler deploy`.
+6. Smoke test: `GET /api/v1/auth/config` → `{"mode":"oidc"}`, login, upload a CSV, see the insight, run the decision workflow, check `/readyz` from Render.
 
-Startup refuses production with dev auth, dev DB credentials/hosts, or local object storage.
+## Cloudflare edge (dashboard, not yet done)
+Managed WAF ruleset; rate-limiting rules for `/api/v1/auth/login|callback` and `/api/v1/documents`; Bot Fight Mode / Turnstile only on the login entry; TLS Full (strict); always HTTPS; no caching rules for `/api/*` (the Worker also forces `Cache-Control: no-store`).
 
-## Environment variables
-See `.env.example` (all `VAND_*`). Separate secrets per environment. Neon pooled endpoint ⇒ `VAND_DB_DISABLE_STATEMENT_CACHE=true`; use the **direct** endpoint for migrations.
+## Rollback
+Render: redeploy previous deploy; Worker: `wrangler rollback`. Migrations are forward-compatible (expand/contract). `0001` downgrade is blocked without `VAND_ALLOW_DESTRUCTIVE_DOWNGRADE`; `0002` downgrade drops `insight_explanations` and scan columns.
 
-## Migrations & rollback
-Forward-only in practice. `0001` downgrade drops the schema and is blocked unless `VAND_ALLOW_DESTRUCTIVE_DOWNGRADE=yes-i-understand`. Roll back application releases by redeploying the
-previous image; write backward-compatible migrations (expand → migrate → contract).
+## Backups / DR
+**Not configured.** Enable Neon PITR + branch restore drill; R2 object versioning; define RPO/RTO before commitments. Redis holds sessions and rate counters only (loss = users re-login).
 
-## Backups / recovery
-**Not configured.** Neon point-in-time restore and R2 versioning/replication must be enabled and a restore drill performed before launch; define RPO/RTO with the business first.
-
-## Incident response (minimum)
-Credential compromise: rotate DB/R2/AI/IdP secrets, revoke sessions at the IdP, review `audit_events` (append-only) for the window. Suspected tenant exposure: freeze uploads, preserve logs and DB snapshot,
-identify affected org ids via audit `request_id`, notify per contract/law (obtain legal guidance; no compliance certification is claimed). Severity/escalation owners are **TBD by VandLabs**.
-
-## Observability
-JSON logs with `request_id` and secret redaction to stdout. Not yet implemented: metrics, tracing, error-monitoring backend, alerts, queue-depth dashboards (queue data is in the `jobs` table).
+## Operations
+Metrics/tracing/alerting are **not implemented** (JSON logs with request ids only; `GET /readyz`; `/usage/ai`; queue state in `jobs`). Parser isolation uses `unshare -rn` when the kernel allows it (reported by tests; GitHub runners and some hosts disable unprivileged user namespaces → falls back to rlimits + in-process socket block).

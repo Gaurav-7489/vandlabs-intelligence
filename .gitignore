@@ -25,3 +25,4 @@ appendonlydir/
 *.sqlite3
 *.pid
 .redis/
+tests/e2e/node_modules/

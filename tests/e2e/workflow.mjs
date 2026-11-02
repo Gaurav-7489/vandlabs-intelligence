@@ -88,7 +88,7 @@ for (const w of [320, 375, 768, 1440]) {
   for (const route of ["Decisions", "Knowledge", "Insights"]) {
     if (w < 1024) { await page.getByRole("button", { name: "Open navigation" }).click(); }
     await page.getByRole("link", { name: route, exact: true }).click();
-    await page.getByRole("heading", { level: 1 }).waitFor();
+    await page.getByRole("heading", { level: 1 }).waitFor({ timeout: 8000 }).catch(async (e) => { await page.screenshot({ path: "/tmp/fail.png" }); throw e; });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     assert.equal(overflow, false, `horizontal overflow on ${route} at ${w}px`);
   }

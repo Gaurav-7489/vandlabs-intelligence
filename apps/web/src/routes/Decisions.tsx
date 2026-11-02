@@ -71,6 +71,15 @@ export function DecisionDetail() {
         <p className="rounded-lg bg-accentsoft p-3 text-accent">Proposed action: {humanize(d.recommended_action.type)} — “{d.recommended_action.title}”</p>
         <p><span className="font-medium">Risks / uncertainty: </span>{d.risks}</p><p><span className="font-medium">Success criteria: </span>{d.success_criteria}</p></div></Card>
 
+      <Card title="What happens next">
+        <ol className="list-decimal space-y-1 p-4 pl-8 text-sm text-ink2">
+          <li className={d.state === "recommendation_ready" ? "font-medium text-ink" : ""}>The requester submits the decision for approval.</li>
+          <li className={d.state === "awaiting_approval" ? "font-medium text-ink" : ""}>A different person with approval authority approves, rejects or defers it. The requester cannot approve their own decision.</li>
+          <li className={d.state === "approved" ? "font-medium text-ink" : ""}>An authorized user executes the approved action: “{d.recommended_action.title}”. Nothing runs before approval.</li>
+          <li className={d.state === "completed" ? "font-medium text-ink" : ""}>The system verifies the result by re-reading the created record, then someone records the real-world outcome.</li>
+        </ol>
+        <p className="border-t border-line px-4 py-3 text-xs text-ink2">Requested by {mine ? "you" : "a colleague"} · {d.approver_user_id ? "decided by an approver" : "no approver yet"}.</p>
+      </Card>
       <Card title="Actions"><div className="space-y-3 p-4">
         {d.state === "recommendation_ready" && can("decisions.write") && <button className="btn btn-primary" disabled={act.isPending} onClick={() => run("submit")}>Submit for approval</button>}
         {d.state === "awaiting_approval" && can("decisions.approve") && (mine

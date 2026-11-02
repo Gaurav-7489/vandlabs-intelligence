@@ -1,8 +1,9 @@
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.audit import service as audit
@@ -30,6 +31,23 @@ async def list_tasks(p: Annotated[Principal, Depends(require(P.TASKS_READ))], st
         stmt = stmt.where(Task.origin == origin)
     r = await page(p.session, stmt, Task, limit, cursor)
     return {"items": [view(t) for t in r["items"]], "next_cursor": r["next_cursor"]}
+
+
+class TaskIn(BaseModel):
+    title: str = Field(min_length=3, max_length=500)
+    owner_email: str | None = Field(default=None, max_length=320)
+    due_date: date | None = None
+
+
+@router.post("", status_code=201)
+async def create_task(body: TaskIn, p: Annotated[Principal, Depends(require(P.TASKS_WRITE))]):
+    """LOW-RISK direct creation (audited, origin='direct'). It is NOT a decision and is never presented as independently approved;
+    material actions must go through the decision/approval workflow (see docs/security/action-risk-matrix.md)."""
+    t = Task(org_id=p.org_id, title=body.title, owner_email=body.owner_email, due_date=body.due_date, status="todo", origin="direct", created_by=p.user.id)
+    p.session.add(t)
+    await p.session.flush()
+    await audit.record(p.session, action="task.created_direct", org_id=p.org_id, actor=p.user.id, resource_type="task", resource_id=t.id, ip=p.ip)
+    return view(t)
 
 
 class TaskStatusIn(BaseModel):

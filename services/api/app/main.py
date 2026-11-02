@@ -1,3 +1,4 @@
+import hmac
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -73,13 +74,18 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
     @app.middleware("http")
     async def request_context(request: Request, call_next):  # type: ignore[no-untyped-def]
         rid = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex
+        edge_ok = bool(s.origin_auth_secret) and hmac.compare_digest(request.headers.get("x-origin-auth", ""), s.origin_auth_secret)
+        request.state.edge_trusted = edge_ok or not s.origin_auth_secret
         request.state.request_id = rid
         token = request_id_var.set(rid)
         try:
             # Reject oversized bodies up front when the client declares a length.
             declared = request.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > s.max_upload_bytes + 1024 * 1024:
-                resp: Response = Response(status_code=413, content='{"error":{"code":"payload_too_large","message":"Request too large"}}',
+            if s.origin_auth_secret and not edge_ok and request.url.path not in ("/healthz", "/readyz"):
+                # Direct-to-origin traffic that bypassed the Cloudflare edge: refuse without revealing anything.
+                resp: Response = Response(status_code=403, content='{"error":{"code":"forbidden","message":"Forbidden"}}', media_type="application/json")
+            elif declared and declared.isdigit() and int(declared) > s.max_upload_bytes + 1024 * 1024:
+                resp = Response(status_code=413, content='{"error":{"code":"payload_too_large","message":"Request too large"}}',
                                           media_type="application/json")
             else:
                 resp = await call_next(request)

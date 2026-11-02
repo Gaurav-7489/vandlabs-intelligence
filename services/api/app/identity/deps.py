@@ -19,7 +19,7 @@ from app.models import Membership, User
 
 def client_ip(request: Request, hops: int) -> str | None:
     fwd = request.headers.get("cf-connecting-ip") or ""
-    if fwd:
+    if fwd and getattr(request.state, "edge_trusted", False):  # spoofable unless the edge authenticated itself
         return fwd.strip()
     parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     if parts and hops > 0:

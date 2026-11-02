@@ -3,7 +3,7 @@
 Enterprise organizational-intelligence platform: it sits above a company's existing systems and turns scattered records into
 **evidence → insight → decision → approved action → verified outcome**.
 
-> **Status: Phase 0 complete, Phase 1 (first intelligence workflow) implemented for local/dev use. Not production-ready.**
+> **Status: Phase 1.5 — real OIDC auth, hardened ingestion, edge/infra configuration prepared. Verified locally; NOT deployed, NOT production-ready.**
 > See [docs/product/status.md](docs/product/status.md) for exactly what is implemented, tested, partial, or blocked.
 
 ## What works today (verified by tests in this repo)
@@ -52,10 +52,11 @@ The local sign-in form exists only when `VAND_AUTH_MODE=dev`; the API refuses th
 ## Tests
 
 ```bash
-cd services/api && pytest -q                 # 41 tests, real Postgres + Redis, migrations applied from scratch
+cd services/api && pytest -q                 # 112 tests, real Postgres + Redis, migrations applied from scratch
 cd services/api && ruff check . && mypy app
 cd apps/web && npm run typecheck && npm run lint && npm test && npm run build
 node tests/e2e/workflow.mjs                  # needs API + worker + web running and seeded demo data
+PY=python bash tests/e2e/run_oidc_stack.sh && node tests/e2e/auth.mjs   # real OIDC browser flow (see docs)
 ```
 
 ## Docs

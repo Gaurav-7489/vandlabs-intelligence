@@ -1,0 +1,14 @@
+# Optional local stack with pgvector (for Phase 2 semantic search) + Redis + ClamAV. NOT used by tests/CI today; unverified in this repo.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment: { POSTGRES_PASSWORD: postgres }
+    ports: ["5432:5432"]
+    volumes: ["./init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro"]
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]   # no persistence: never creates dump.rdb
+    ports: ["6379:6379"]
+  clamav:
+    image: clamav/clamav:stable
+    ports: ["3310:3310"]

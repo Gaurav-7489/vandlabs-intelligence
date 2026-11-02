@@ -48,7 +48,7 @@ export function Badge({ tone, children }: { tone?: string; children: ReactNode }
 
 export const sevTone = (s: string) => (s === "high" ? "high" : s === "medium" ? "medium" : "low");
 export const stateTone = (s: string) => (["completed", "outcome_measured", "closed", "approved", "done", "succeeded"].includes(s) ? "ok"
-  : ["rejected", "failed", "blocked", "dead_letter"].includes(s) ? "high" : ["awaiting_approval", "requires_review", "in_progress"].includes(s) ? "medium" : "accent");
+  : ["rejected", "failed", "blocked", "dead_letter", "quarantined"].includes(s) ? "high" : ["awaiting_approval", "requires_review", "in_progress", "scan_pending"].includes(s) ? "medium" : "accent");
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (

@@ -87,6 +87,9 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
     trusted_proxy_hops: int = 1
+    # Shared secret the Cloudflare Worker adds to origin requests. When set, requests without it are rejected (except health probes)
+    # and CF-Connecting-IP is trusted only on authenticated edge requests.
+    origin_auth_secret: str = ""
 
     @model_validator(mode="after")
     def _guard_production(self) -> "Settings":
@@ -97,6 +100,8 @@ class Settings(BaseSettings):
                 raise ValueError("OIDC issuer, audience and JWKS URL are required")
             if any("dev_" in u or "localhost" in u for u in (self.database_url, self.worker_database_url, self.migration_database_url)):
                 raise ValueError("Development database credentials/hosts are not permitted outside local/test")
+            if len(self.origin_auth_secret) < 32:
+                raise ValueError("origin_auth_secret (>=32 chars) is required outside local/test")
             if not (self.oidc_client_id and self.oidc_client_secret and self.session_encryption_key):
                 raise ValueError("OIDC client id/secret and session_encryption_key are required")
             if not self.public_base_url.startswith("https://"):
