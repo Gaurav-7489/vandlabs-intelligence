@@ -4,7 +4,7 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 
 | Area | Status | Evidence / caveat |
 |---|---|---|
-| Tenant isolation (RLS FORCE, non-owner roles), RBAC, audit append-only | V | 112 backend tests incl. raw-SQL cross-tenant tests |
+| Tenant isolation (RLS FORCE incl. `users`, non-owner roles), RBAC, audit append-only | V | 138 backend tests incl. raw-SQL cross-tenant and privileged-role tests (0 skipped) |
 | Unsafe DB role detection (superuser / BYPASSRLS / owner / RLS not forced) | V | fatal at startup in staging/production; `/readyz` `db_role`; tested with owner and BYPASSRLS roles |
 | OIDC Authorization Code + PKCE, BFF encrypted sessions, CSRF, revocation, MFA gate | V against a **local test issuer** (24 tests + real-browser E2E) ; **B** against Auth0 | see docs/operations/auth0-setup.md |
 | Session restore on refresh, expiry handling, sign-out cache wipe | V | browser E2E |
@@ -20,7 +20,10 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 | Explanation history (versioned, canonical insight untouched) | V | |
 | Decisions/approvals/verified execution; direct low-risk tasks labelled and audited | V | docs/security/action-risk-matrix.md |
 | Frontend: perf, a11y basics, CSP | V: strict CSP (no inline scripts) 0 violations in browser; contrast tests; responsive overflow checks 320–1440 | no screen-reader audit, no Lighthouse/CWV, no list virtualization (cursor pages of 20 instead) |
-| Edge Worker, `_headers`, wrangler, Render blueprint, Dockerfile, compose, deploy/backup workflows | **E** | written, **not built/deployed**; no Docker daemon here |
+| Edge Worker + wrangler config | V bundle/config via `wrangler deploy --dry-run`; **B** deploy | |
+| Render blueprint, Dockerfile (runtime-only lock), deploy/backup workflows | **E** checked against vendor specs; **not built/deployed** (no Docker daemon here) | |
+| Neon/R2 driver compatibility | V URL translation + pooler-mode queries; R2 checksum config | live services not reached |
+| Supply chain | V runtime lock drift check, pip-audit (tested + runtime), CycloneDX SBOMs, Dependabot | actions not SHA-pinned; no hash pinning |
 | CI (api, web, secrets, e2e) | V on GitHub | see PR #1 checks |
 | Cloudflare WAF/Turnstile/rate-limit rules, origin restriction | B (dashboard) | shared-secret origin auth implemented and tested |
 | Backups | V (drill in CI: dump as read-only BYPASSRLS role → restore → verify counts/RLS/isolation); **B** staging schedule | docs/operations/backups.md |

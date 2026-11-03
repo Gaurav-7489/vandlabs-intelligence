@@ -17,11 +17,27 @@ Scope: all 146 files. Method: artifact/credential sweep, route inventory, advers
 | 10 | CI e2e used fixed sleeps (failed once on a race) | Low | readiness waits (`scripts/wait_for.sh`) | CI |
 | 11 | No dependency-update automation | Low | Dependabot (pip, npm, actions) | `.github/dependabot.yml` |
 
+## Second review round (2026-11-03, after CI run #3)
+| # | Finding | Severity | Fix | Evidence |
+|---|---|---|---|---|
+| 12 | `users` table had no RLS: a missing filter in tenant code could list every tenant's emails | Medium | Migration 0004: FORCE RLS; visible = self, current-tenant members, explicit identity step, platform; insert/update only in identity step; no DELETE | `test_users_rls_and_backup_role.py`, drill checks users isolation |
+| 13 | Backup role scope | Info | Verified read-only (INSERT/UPDATE/DELETE/TRUNCATE denied) and refused as a runtime role | same file |
+| 14 | Production image installed test/dev tooling (moto, pytest, mypy, pip-audit, Flask…) | Medium (supply chain) | `requirements.runtime.lock.txt` (52 pins); CI fails if it drifts from the tested lock — it immediately caught psycopg 3.3.7 vs tested 3.3.6 | `scripts/check_runtime_lock.py` |
+| 15 | Neon URLs (`sslmode`, `channel_binding`) crash asyncpg; pooled endpoint needs unique prepared-statement names | High (would not start) | URL normalisation preserving TLS; pooler-safe engine options | `test_deploy_compat.py` (real queries in pooler mode) |
+| 16 | boto3 ≥1.36 default checksums rejected by R2 in recent reports | Medium | checksums `when_required` | `test_r2_client_sends_checksums_only_when_required` |
+| 17 | Render blueprint referenced an undefined env group; Key Value default `allkeys-lru` could evict rate-limit counters; container ignored `$PORT` | Medium | blueprint rewritten per spec; `noeviction`; `${PORT:-8000}` with exec | `render.yaml`, `Dockerfile` |
+| 18 | Worker proxy forwarded the browser `Host` header; client IP relied on `CF-Connecting-IP` surviving a subrequest | Low | drop Host; explicit `X-Vand-Client-IP`, trusted only with `X-Origin-Auth` | `test_client_ip_header_only_trusted_from_edge`; `wrangler deploy --dry-run` OK |
+| 19 | Restore tooling version mismatch (runner client 18 vs server 17) | Medium (DR) | drill version guard + client tools from the same `postgres:17` image | CI drill step |
+| 20 | No SBOM | Low | CycloneDX SBOMs for production Python and shipped npm deps as CI artifacts | CI |
+| 21 | UI lacked document reprocess/delete, session revocation, invite link, direct-task entry (APIs existed) | Low (UX) | added with two-step delete; e2e `ui_actions.mjs` | CI e2e |
+
+**Limit stated explicitly:** tenant isolation via RLS uses transaction-scoped settings (`app.org_id`, `app.identity_resolution`). It protects against queries that *forget* a filter, not against arbitrary SQL injection inside the app role (an injected statement could also call `set_config`). Parameterized queries everywhere remain the primary SQLi control; there is no string-built SQL with user input in the codebase.
+
 ## Verified unchanged
 No tracked runtime artifacts or credentials (only reviewed placeholders, each marked `pragma: allowlist secret` or in the baseline); dev token route mounted only in dev mode and Settings refuse dev mode in staging/prod; RLS FORCE on all tenant tables; audit append-only; approval separation of duties; idempotent verified execution; CSRF on all cookie-authenticated writes; Redis snapshot incident closed (history not rewritten).
 
 ## Accepted residual risks (documented, not fixed)
-- `users` table has no RLS (emails readable by the app role); mitigated by app-level scoping and parameterized queries. Revisit with a `users` policy keyed to memberships.
-- Actions are pinned by major tag, not commit SHA.
+- GitHub Actions are pinned by major tag, not commit SHA (Dependabot now proposes updates; SHA pinning recommended before production).
+- Python deps are version-pinned but not hash-pinned (`--require-hashes`); npm uses lockfile integrity hashes.
 - Parser isolation is rlimits + netns (when allowed) + socket block, not a container/seccomp sandbox.
 - IdP outage keeps existing sessions alive until the next successful revalidation.
