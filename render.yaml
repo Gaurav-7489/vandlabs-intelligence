@@ -1,0 +1,77 @@
+# Render Blueprint (STAGING). NOT applied: provisioning needs a Render account and creates billable services.
+# Field names follow https://render.com/docs/blueprint-spec . Secrets are `sync: false` (entered in the dashboard; never in Git).
+# Owner/migration credentials are deliberately ABSENT: migrations run in .github/workflows/deploy-staging.yml.
+envVarGroups:
+  - name: vand-staging-shared
+    envVars:
+      - { key: VAND_ENV, value: staging }
+      - { key: VAND_AUTH_MODE, value: oidc }
+      - { key: VAND_PUBLIC_BASE_URL, sync: false }          # https://<staging web origin> (the Worker URL)
+      - { key: VAND_CORS_ORIGINS, sync: false }             # same https origin
+      - { key: VAND_OIDC_ISSUER, sync: false }              # https://<tenant>.<region>.auth0.com/
+      - { key: VAND_OIDC_AUDIENCE, sync: false }
+      - { key: VAND_OIDC_JWKS_URL, sync: false }
+      - { key: VAND_OIDC_CLIENT_ID, sync: false }
+      - { key: VAND_OIDC_CLIENT_SECRET, sync: false }
+      - { key: VAND_OIDC_EXTRA_AUTHORIZE_PARAMS, sync: false } # audience=<API identifier>
+      - { key: VAND_SESSION_ENCRYPTION_KEY, sync: false }
+      - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }
+      - { key: VAND_DATABASE_URL, sync: false }             # Neon POOLED endpoint, role vand_app (sslmode=require is translated for asyncpg)
+      - { key: VAND_WORKER_DATABASE_URL, sync: false }      # Neon POOLED endpoint, role vand_worker
+      - { key: VAND_DB_DISABLE_STATEMENT_CACHE, value: "true" }  # required behind Neon's transaction-mode pooler
+      - { key: VAND_STORAGE_BACKEND, value: s3 }
+      - { key: VAND_S3_ENDPOINT_URL, sync: false }          # https://<account>.r2.cloudflarestorage.com
+      - { key: VAND_S3_BUCKET, sync: false }
+      - { key: VAND_S3_ACCESS_KEY_ID, sync: false }         # R2 token scoped to ONE bucket, Object Read & Write
+      - { key: VAND_S3_SECRET_ACCESS_KEY, sync: false }
+      - { key: VAND_SCANNER_BACKEND, value: clamd }
+      - { key: VAND_SCAN_REQUIRED, value: "true" }
+      - { key: VAND_CLAMD_PORT, value: "3310" }
+      - { key: VAND_ANTHROPIC_API_KEY, sync: false }        # optional; leave empty to keep AI disabled
+      - { key: VAND_WORKER_IDLE_SWEEP_SECONDS, value: "1800" }  # idle worker waits on Redis; lets Neon Free scale to zero
+
+services:
+  - type: web
+    name: vand-api-staging
+    runtime: docker
+    dockerfilePath: ./services/api/Dockerfile
+    dockerContext: ./services/api
+    plan: starter
+    region: singapore          # keep near the Neon project region you choose
+    healthCheckPath: /healthz
+    numInstances: 1            # stateless; scale out after load testing (state lives in Postgres/Redis)
+    envVars:
+      - fromGroup: vand-staging-shared
+      - key: VAND_REDIS_URL
+        fromService: { type: keyvalue, name: vand-redis-staging, property: connectionString }
+      - key: VAND_CLAMD_HOST
+        fromService: { type: pserv, name: vand-clamav-staging, property: host }
+
+  - type: worker
+    name: vand-worker-staging
+    runtime: docker
+    dockerfilePath: ./services/api/Dockerfile
+    dockerContext: ./services/api
+    dockerCommand: python -m app.worker
+    plan: starter
+    region: singapore
+    envVars:
+      - fromGroup: vand-staging-shared
+      - key: VAND_REDIS_URL
+        fromService: { type: keyvalue, name: vand-redis-staging, property: connectionString }
+      - key: VAND_CLAMD_HOST
+        fromService: { type: pserv, name: vand-clamav-staging, property: host }
+
+  - type: pserv
+    name: vand-clamav-staging
+    runtime: image
+    image: { url: docker.io/clamav/clamav:stable }
+    plan: pro                  # ClamAV docs: ~4 GB RAM (>=1.2 GiB signatures, ~2x during reload). Suspend when idle (billed per second).
+    region: singapore
+
+  - type: keyvalue
+    name: vand-redis-staging
+    plan: free                 # 25 MB, no persistence: restart => users sign in again, counters reset (acceptable for staging only)
+    region: singapore
+    ipAllowList: []            # internal connections only
+    maxmemoryPolicy: noeviction  # never silently evict rate-limit counters/sessions; writes fail closed when full (alert on memory)

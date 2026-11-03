@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers + Static Assets. NOT yet deployed/verified (needs an account and the secrets named in docs/operations/deployment.md).
+  "name": "vandlabs-intelligence-web-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-01-01",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+  "vars": { "API_ORIGIN": "https://REPLACE-with-render-staging-api-origin" }
+  // secrets: ORIGIN_AUTH_SECRET  (wrangler secret put ORIGIN_AUTH_SECRET)
+}

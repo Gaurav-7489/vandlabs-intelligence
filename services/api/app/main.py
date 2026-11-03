@@ -1,0 +1,114 @@
+import hmac
+import time
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import httpx
+import redis.asyncio as aioredis
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.ai.gateway import AIGateway
+from app.audit.router import router as audit_router
+from app.core import metrics
+from app.core.config import Settings, get_settings
+from app.core.db import Database, make_engine
+from app.core.dbsafety import check_role_safety
+from app.core.errors import install_error_handlers
+from app.core.logging import configure_logging, get_logger, request_id_var
+from app.core.ratelimit import RateLimiter
+from app.core.state import AppState
+from app.core.storage import make_storage
+from app.decisions.router import router as decisions_router
+from app.documents.router import router as documents_router
+from app.health.router import router as health_router
+from app.identity.auth_router import router as auth_router
+from app.identity.oidc import OidcClient
+from app.identity.router import router as identity_router
+from app.identity.sessions import SessionStore
+from app.identity.tokens import TokenVerifier
+from app.intelligence.router import router as intelligence_router
+from app.ops.router import router as ops_router
+from app.search.router import router as search_router
+from app.tasks.router import router as tasks_router
+
+log = get_logger("http")
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",  # API serves JSON only
+    "Cache-Control": "no-store",  # tenant data must never sit in shared caches
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
+
+
+def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oidc_http: httpx.AsyncClient | None = None) -> FastAPI:
+    s = settings or get_settings()
+    configure_logging()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        db = Database(make_engine(s.database_url, s))
+        if s.env in ("staging", "production"):  # refuse to start in a known-unsafe database configuration
+            async with db.bare_session() as probe:
+                safety = await check_role_safety(probe)
+            if not safety.ok:
+                await db.dispose()
+                raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
+        r = aioredis.from_url(s.redis_url, decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
+        oidc = OidcClient(s, oidc_http) if s.auth_mode == "oidc" else None
+        gateway = ai or AIGateway(s)
+        gateway.redis = r
+        app.state.vand = AppState(settings=s, db=db, limiter=RateLimiter(s.redis_url), verifier=TokenVerifier(s),
+                                  storage=make_storage(s), ai=gateway, redis=r, oidc=oidc, sessions=SessionStore(r, s, oidc))
+        yield
+        await app.state.vand.limiter.close()
+        await r.aclose()
+        await db.dispose()
+
+    app = FastAPI(title="VandLabs Intelligence API", version="0.1.0", lifespan=lifespan,
+                  docs_url=None if s.env == "production" else "/docs", redoc_url=None,
+                  openapi_url=None if s.env == "production" else "/openapi.json")
+    install_error_handlers(app)
+    app.add_middleware(CORSMiddleware, allow_origins=s.cors_origin_list, allow_methods=["GET", "POST", "PATCH", "DELETE"],
+                       allow_headers=["authorization", "content-type", "x-org-id", "idempotency-key", "x-csrf-token"], allow_credentials=False,
+                       expose_headers=["x-request-id", "retry-after"])
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+        t0 = time.perf_counter()
+        rid = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex
+        edge_ok = bool(s.origin_auth_secret) and hmac.compare_digest(request.headers.get("x-origin-auth", ""), s.origin_auth_secret)
+        request.state.edge_trusted = edge_ok or not s.origin_auth_secret
+        request.state.request_id = rid
+        token = request_id_var.set(rid)
+        try:
+            # Reject oversized bodies up front when the client declares a length.
+            declared = request.headers.get("content-length")
+            if s.origin_auth_secret and not edge_ok and request.url.path not in ("/healthz", "/readyz"):
+                # Direct-to-origin traffic that bypassed the Cloudflare edge: refuse without revealing anything.
+                resp: Response = Response(status_code=403, content='{"error":{"code":"forbidden","message":"Forbidden"}}', media_type="application/json")
+            elif declared and declared.isdigit() and int(declared) > s.max_upload_bytes + 1024 * 1024:
+                resp = Response(status_code=413, content='{"error":{"code":"payload_too_large","message":"Request too large"}}',
+                                          media_type="application/json")
+            else:
+                resp = await call_next(request)
+            await metrics.observe_request(request.app.state.vand.redis, resp.status_code, (time.perf_counter() - t0) * 1000)
+            for k, v in SECURITY_HEADERS.items():
+                resp.headers.setdefault(k, v)
+            resp.headers["X-Request-ID"] = rid
+            log.info("request", extra={"method": request.method, "path": request.url.path, "status": resp.status_code})
+            return resp
+        finally:
+            request_id_var.reset(token)
+
+    app.include_router(health_router)
+    api = "/api/v1"
+    for r in (auth_router, ops_router, identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
+        app.include_router(r, prefix=api)
+    if s.auth_mode == "dev":  # unreachable in staging/production: Settings rejects dev mode there
+        from app.identity.dev_auth import router as dev_router
+        app.include_router(dev_router, prefix=api)
+    return app
