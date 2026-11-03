@@ -1,13 +1,15 @@
 # Render Blueprint (STAGING). NOT applied: provisioning needs a Render account and creates billable services.
 # Field names follow https://render.com/docs/blueprint-spec . Secrets are `sync: false` (entered in the dashboard; never in Git).
 # Owner/migration credentials are deliberately ABSENT: migrations run in .github/workflows/deploy-staging.yml.
+# Phase 1.7: the browser origin is the existing Vercel project; /api/v1/* reaches this API through the Vercel
+# gateway function (apps/web/api/gateway.ts), which adds X-Origin-Auth server-side. Direct calls without it get 403.
 envVarGroups:
   - name: vand-staging-shared
     envVars:
       - { key: VAND_ENV, value: staging }
       - { key: VAND_AUTH_MODE, value: oidc }
-      - { key: VAND_PUBLIC_BASE_URL, sync: false }          # https://<staging web origin> (the Worker URL)
-      - { key: VAND_CORS_ORIGINS, sync: false }             # same https origin
+      - { key: VAND_PUBLIC_BASE_URL, value: "https://vandlabs-intelligence.vercel.app" }  # browser origin (Vercel); OIDC callback = <this>/api/v1/auth/callback
+      - { key: VAND_CORS_ORIGINS, value: "https://vandlabs-intelligence.vercel.app" }     # same origin; also the CSRF Origin allow-list
       - { key: VAND_OIDC_ISSUER, sync: false }              # https://<tenant>.<region>.auth0.com/
       - { key: VAND_OIDC_AUDIENCE, sync: false }
       - { key: VAND_OIDC_JWKS_URL, sync: false }
@@ -15,7 +17,8 @@ envVarGroups:
       - { key: VAND_OIDC_CLIENT_SECRET, sync: false }
       - { key: VAND_OIDC_EXTRA_AUTHORIZE_PARAMS, sync: false } # audience=<API identifier>
       - { key: VAND_SESSION_ENCRYPTION_KEY, sync: false }
-      - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }
+      - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }       # same value as VAND_ORIGIN_AUTH_SECRET in Vercel (Production scope only)
+      - { key: VAND_MAX_UPLOAD_BYTES, value: "4194304" }    # Vercel Functions cap request bodies at 4.5 MB; the SPA enforces 4 MB too
       - { key: VAND_DATABASE_URL, sync: false }             # Neon POOLED endpoint, role vand_app (sslmode=require is translated for asyncpg)
       - { key: VAND_WORKER_DATABASE_URL, sync: false }      # Neon POOLED endpoint, role vand_worker
       - { key: VAND_DB_DISABLE_STATEMENT_CACHE, value: "true" }  # required behind Neon's transaction-mode pooler

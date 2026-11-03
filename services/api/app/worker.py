@@ -3,6 +3,7 @@
 Run: python -m app.worker
 """
 import asyncio
+import contextlib
 import os
 import signal
 import socket
@@ -111,13 +112,30 @@ class Worker:
             await self.heartbeat()
             slice_s = max(1, int(min(30.0, deadline - time.monotonic())))
             try:
-                if await self.redis_block.blpop([WAKE_KEY], timeout=slice_s):
+                if await self._blpop_or_stop(slice_s):
                     return True
             except Exception as exc:  # noqa: BLE001
                 # Redis unavailable: degrade to checking Postgres directly (keeps jobs moving; may keep a serverless DB awake).
                 log.warning("wake_wait_failed", extra={"err": type(exc).__name__})
                 await asyncio.sleep(min(5.0, slice_s))
                 return True
+        return False
+
+    async def _blpop_or_stop(self, timeout_s: int) -> bool:
+        """BLPOP that a shutdown signal interrupts at once (otherwise SIGTERM waits up to 30 s and platforms SIGKILL us).
+        The blocking connection is only abandoned on shutdown, so a wake signal can never be swallowed while running;
+        a signal popped during shutdown is harmless because jobs are durable in Postgres and the next worker drains them."""
+        pop = asyncio.ensure_future(self.redis_block.blpop([WAKE_KEY], timeout=timeout_s))
+        stop = asyncio.ensure_future(self._stop.wait())
+        try:
+            done, _ = await asyncio.wait({pop, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+        if pop in done:
+            return bool(pop.result())
+        pop.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await pop
         return False
 
     async def drain(self, grace_s: float = 5.0) -> int:

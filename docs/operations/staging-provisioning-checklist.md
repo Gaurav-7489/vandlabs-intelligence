@@ -1,50 +1,51 @@
-# Staging provisioning checklist (low-cost)
+# Staging provisioning checklist (low-cost) — reconciled 2026-11-03 (Phase 1.7)
 
-Nothing here has been executed. Costs are from vendor pricing pages read 2026-11-03 (see staging-resource-plan.md); re-check before purchase.
-Legend: **[APPROVE]** needs your explicit approval (cost or account change) · **[YOU]** only you can do it (owner login, billing, secrets) · **[CLAUDE]** I can do it once access is granted.
+A checkbox or approval here is **not** proof that a resource exists. "Exists" below means the owner reported it as
+verified in their own account; nothing in this file was provisioned from a Claude session (no Neon, Cloudflare,
+Vercel, Auth0 or Render access was available to it). Prices: vendor pages read 2026-11-03; re-check before purchase.
+Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done once access is granted.
 
-## Approvals needed (summary)
-**Approved 2026-11-03:** A1, A2, A3, A5, A7 (**Free plan only**: if Free cannot enforce MFA, stop and ask again before buying B2C Essentials), A8. All $0.
-**Still pending:** A4 (≈ $14/mo), A6 (ClamAV), A9.
-
-| # | Approval | Recurring cost | Why |
-|---|---|---|---|
-| A1 ✅ | Create a **new** Neon project `vandlabs-intelligence-staging` in your existing free org (region: Singapore, matching your other projects) | $0 (Free: 100 CU-h/project/month, 1 GB, scale-to-zero after 5 min idle) | Separate from the Automobile Engine / AVIENDO projects. The idle worker no longer polls Postgres (Redis wake + 30 min sweep), so compute can scale to zero; a 1-second poller would have used ≈182 CU-h/month at 0.25 CU and Neon would suspend the DB mid-month |
-| A2 ✅ | Create R2 bucket `vand-intel-staging-docs` (+ `vand-intel-staging-backups`) and two scoped API tokens in your existing Cloudflare account | $0 within free tier (10 GB-mo, 1M Class A, 10M Class B) | Private document + encrypted backup storage |
-| A3 ✅ | Deploy Worker `vandlabs-intelligence-web-staging` (workers.dev URL) in the same Cloudflare account | $0 on Workers Free (100k Worker req/day) | Does not touch the 12 existing Workers |
-| A4 | Render: API web service + background worker (Starter each) | **≈ $14/mo** ($7 + $7) | Python runtime |
-| A5 ✅ | Render Key Value (free, 25 MB, no persistence) | $0 | Sessions + distributed rate limits |
-| A6 | Render private service for ClamAV (4 GB plan), **suspended when not testing** | **≈ $0.12/h running; ≈ $85/mo if left on** | Real malware scanning (required by config in staging) |
-| A7 ✅ | Auth0 staging tenant (Free). **If Free cannot enforce MFA**, B2C Essentials | $0, or **$35/mo** | MFA for owner/admin is a hard requirement |
-| A8 ✅ | Leave AI providers **disabled** in staging (no keys) | $0 | Enable later only with a key in a secret store + a token budget |
-| A9 | Run the 17-step acceptance test with synthetic users only | — | No customer data |
-Expected: **≈ $14–16/mo** (ClamAV running ~10 h), +$35 only if Auth0 Free lacks MFA.
+## Approvals and actual state
+| # | Scope | Approval | Actual state | Cost |
+|---|---|---|---|---|
+| A1 | Neon project `vandlabs-intelligence-staging` (id `shy-leaf-28061787`, PG 17, `aws-ap-southeast-1`, org `Gaurav`) | ✅ approved | **Exists** (owner-verified). Roles, migrations, RLS checks **not yet done** (step 2) | $0 Free |
+| A2 | R2 buckets `vand-intel-staging-docs`, `vand-intel-staging-backups` + scoped tokens, existing Cloudflare account | ✅ approved (free tier) | Unknown — check before creating (step 3) | $0 within free tier |
+| A3 | Cloudflare **frontend** Worker | ✅ approved (free) | **Superseded — do not deploy.** Vercel already hosts the SPA; `/api/v1/*` now goes through the Vercel gateway function (ADR 0007). `apps/web/worker/` is kept only as an optional future edge | — |
+| A4 | Python API + worker hosting (Render Starter ×2) | ❌ **not approved** | Not created. **Blocks every live backend step** | ≈ $14/mo |
+| A5 | Redis (Render Key Value Free) | ✅ approved (free) | **Deferred**: only reachable from Render services, so it is created together with A4 | $0 |
+| A6 | ClamAV private service | ❌ **not approved** | Not created. Staging config refuses to start without a scanner | ≈ $0.12/h; ≈ $85/mo if left on |
+| A7 | Auth0 staging tenant, **Free plan only** | ✅ approved (Free) | Unknown. If Free cannot require MFA → stop and ask; do not buy Essentials | $0 (Essentials $35/mo needs a new approval) |
+| A8 | AI providers disabled (no keys) | ✅ approved | In effect by default (no keys in config) | $0 |
+| A9 | Live 17-step acceptance run with synthetic users | ⏳ prepare only | Prepared and **rehearsed locally** (passes); live run needs approval after A4/A6 | — |
 
 ## Steps
-1. **[YOU] GitHub**: create environment `staging` with required reviewers; add secrets later listed in step 9. Enable branch protection on `main` (require CI checks `api`, `web`, `secrets`, `e2e`).
-2. **[APPROVED A1] Neon**: create project (PG 17). As the project owner run `infra/database/roles.sql` **with strong generated passwords** (never the dev ones). Verify the roles are *not* members of `neon_superuser` (`\du`). Record: direct URL (owner, migrations), pooled URLs (`vand_app`, `vand_worker`), direct URL for `vand_backup`.
-3. **[APPROVED A2] R2**: buckets private (no public access, no custom domain). Token 1: Object Read & Write on `vand-intel-staging-docs` only. Token 2: Object Write on `vand-intel-staging-backups` only. Enable object versioning/lifecycle if available on your plan.
-4. **[APPROVED A7] Auth0**: follow `docs/operations/auth0-setup.md`. First check in the tenant that MFA (OTP/WebAuthn) can be required on the plan; confirm the ID token carries `amr: ["mfa"]` after an MFA login. Create synthetic users: requester, approver, auditor, outsider (separate org), owner (MFA enrolled).
-5. **[APPROVE A4, A6 · A5 approved] Render**: connect the GitHub repo, apply `render.yaml` (Blueprint). Fill every `sync: false` variable from the secret manager. Generate: `VAND_SESSION_ENCRYPTION_KEY` (Fernet), `VAND_ORIGIN_AUTH_SECRET` (≥ 32 random chars). Use **pooled** Neon URLs + `VAND_DB_DISABLE_STATEMENT_CACHE=true`. Do **not** add any owner/migration URL (the app refuses to start if present).
-6. **[CLAUDE] Migrations**: GitHub secret `STAGING_OWNER_DATABASE_URL` (direct endpoint; the plain `postgresql://…?sslmode=require` string from Neon works as-is — driver selection is automatic) → run *Deploy staging (manual)* → `migrate` job (`alembic upgrade head` → 0004). Then create the first platform admin with `OWNER_DATABASE_URL=… python -m app.cli create-platform-admin <your email>`.
-7. **[APPROVED A3] Cloudflare Worker**: set `API_ORIGIN` in `apps/web/wrangler.jsonc` to the Render API URL; `wrangler secret put ORIGIN_AUTH_SECRET` (same value as Render); `npm run build && wrangler deploy` (already validated with `--dry-run`). Set `VAND_PUBLIC_BASE_URL` / `VAND_CORS_ORIGINS` on Render to the Worker URL; Auth0 callback = `<worker URL>/api/v1/auth/callback`.
-8. **[YOU] Cloudflare edge** (workers.dev has limited zone features; a custom domain on your zone enables full WAF): managed WAF ruleset, rate-limiting rule on `/api/v1/auth/*` and `/api/v1/documents`, Bot Fight Mode on the zone, Turnstile only if login abuse appears.
-9. **[YOU] GitHub secrets for workflows**: `CLOUDFLARE_API_TOKEN` (Workers deploy, scoped), `CLOUDFLARE_ACCOUNT_ID`, `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_WORKER`, `STAGING_OWNER_DATABASE_URL`, `STAGING_BACKUP_DATABASE_URL`, `BACKUP_ENCRYPTION_PASSPHRASE`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`, `R2_ENDPOINT`; variable `STAGING_WEB_URL`.
-10. **[CLAUDE] Verification** (no customer data):
-    - `GET /readyz` with `X-Origin-Auth` ⇒ `database ok`, `redis ok`, **`db_role ok` on Neon** (the key RLS check).
-    - Direct call to the Render URL without the secret ⇒ 403.
-    - Run `tests/staging/acceptance.mjs` with `IDP=auth0 EXPECT_SCAN=clean` (17 steps, real ClamAV, real Auth0, real R2/Neon).
-    - Run *Backup staging* once, then restore into a Neon branch and run the drill checks.
-    - Upload an EICAR test file ⇒ quarantined, not searchable.
-    - Suspend ClamAV ⇒ uploads held as `scan_pending`; resume ⇒ processed.
-    - Review Render logs for errors; check `/api/v1/ops/metrics` (platform admin).
-11. **[YOU] Rollback plan**: Render "rollback to previous deploy"; `wrangler rollback`; migrations are additive (0002–0004 downgrades exist and were not destructive except 0001).
+1. **[YOU] GitHub**: give Claude push access (connect GitHub at https://claude.ai/connect-github and install the Claude GitHub App on `Gaurav-7489/vandlabs-intelligence`). Create environment `staging` with required reviewers. Branch protection on `main` (require `api`, `web`, `secrets`, `e2e`).
+2. **[YOU/CLAUDE] Neon (A1, exists)** — do **not** create another project.
+   - Console → project `shy-leaf-28061787` → Branches: confirm the default branch and database name (`neondb` unless renamed).
+   - Compute → *Scale to zero*: on Free it is fixed at 5 min and cannot be disabled (Neon docs). `suspend_timeout_seconds: 0` in the creation response means "plan default" (not "never"); confirm the console shows 5 min. The idle worker does not poll Postgres (Redis BLPOP + 30 min sweep, `VAND_WORKER_IDLE_SWEEP_SECONDS=1800`), so compute can suspend.
+   - As the project owner, run `infra/database/roles.sql` **with strong generated passwords** (replace every `dev_*_pw`). Check `\du`: `vand_app`/`vand_worker` must be NOSUPERUSER, NOBYPASSRLS and not members of `neon_superuser`. `vand_backup` is BYPASSRLS read-only (`SELECT` only; verify it cannot `INSERT`).
+   - Migrations: step 6. Record URLs in the secret manager only: owner direct URL (migrations), pooled `vand_app` and `vand_worker` URLs, direct `vand_backup` URL.
+3. **[YOU] R2 (A2)**: list buckets first; create only the two missing ones, private (no r2.dev public URL, no custom domain), location hint APAC. Tokens: (a) Object Read & Write on `vand-intel-staging-docs` only → API + worker; (b) Object Write on `vand-intel-staging-backups` only → backup workflow; (c) **restore** needs Object Read on backups — create it only when a restore drill runs, then revoke. Enable lifecycle rule on backups (e.g. delete after 35 days).
+4. **[YOU] Auth0 (A7, Free)**: follow `docs/operations/auth0-setup.md`. First check Security → Multi-factor Auth: can OTP/WebAuthn be set to *Always*? Log in once with MFA and confirm the ID token has `amr: ["mfa"]`. If not available on Free → **stop**, report, do not weaken `VAND_REQUIRE_MFA_FOR_PRIVILEGED`. Application: Regular Web App; Allowed Callback `https://vandlabs-intelligence.vercel.app/api/v1/auth/callback`; Allowed Logout `https://vandlabs-intelligence.vercel.app/`; Web Origin same origin. Synthetic users: requester, approver, auditor, outsider (separate org), owner (MFA enrolled).
+5. **[APPROVE A4 + A6] Python hosting**: see `docs/operations/phase-1-7-integration.md` §Hosting. With Render: connect repo, apply `render.yaml`, fill every `sync: false` var from the secret manager. Generate `VAND_SESSION_ENCRYPTION_KEY` (Fernet) and `VAND_ORIGIN_AUTH_SECRET` (≥ 32 random chars). Pooled Neon URLs + `VAND_DB_DISABLE_STATEMENT_CACHE=true`. No owner/migration URL in the runtime env (the app refuses to start).
+6. **[CLAUDE] Migrations**: GitHub secret `STAGING_OWNER_DATABASE_URL` (Neon direct endpoint) → run *Deploy staging (manual)* → `migrate` (`alembic upgrade head`). Then `OWNER_DATABASE_URL=… python -m app.cli create-platform-admin <email>`. Verify `GET /readyz` (with `X-Origin-Auth`) ⇒ `db_role ok`.
+7. **[YOU] Vercel (existing project — do not create another)**: Settings → Environment Variables, **Production scope only**: `VAND_API_ORIGIN=https://<API host>` and `VAND_ORIGIN_AUTH_SECRET=<same as API>`. Do not set them for Preview (the gateway refuses to proxy there unless `VAND_GATEWAY_ALLOW_PREVIEW=true`). Never use a `VITE_` prefix for either. Redeploy `main`. Confirm root directory `apps/web`, framework Vite, build `npm run build`, output `dist`.
+8. **[YOU] Edge protections**: on `*.vercel.app` use Vercel Firewall rules if your plan has them (rate limit `/api/v1/auth/*`, `/api/v1/documents`); the API's own Redis-backed limits apply regardless. Full Cloudflare WAF needs a custom domain (not approved).
+9. **[YOU] GitHub secrets for workflows**: `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_WORKER`, `STAGING_OWNER_DATABASE_URL`, `STAGING_BACKUP_DATABASE_URL`, `BACKUP_ENCRYPTION_PASSPHRASE`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`, `R2_ENDPOINT`; variables `STAGING_WEB_URL=https://vandlabs-intelligence.vercel.app`, `STAGING_API_URL=https://<API host>`. (Cloudflare Worker deploy secrets are no longer needed.)
+10. **[CLAUDE, after A9 approval] Verification** — synthetic data only:
+    - `curl https://<API host>/api/v1/auth/session` ⇒ 403 (direct origin refused); `https://vandlabs-intelligence.vercel.app/api/v1/auth/session` ⇒ 200 `{"authenticated":false}`.
+    - Preview deployment `/api/v1/auth/session` ⇒ 503 `gateway_unavailable`.
+    - `tests/staging/acceptance.mjs` with `BASE_URL=https://vandlabs-intelligence.vercel.app IDP=auth0 EXPECT_SCAN=clean`.
+    - EICAR upload ⇒ quarantined, not searchable; 4.2 MB file ⇒ clear "larger than 4 MB" message; scanner suspended ⇒ `scan_pending`, resumed ⇒ processed.
+    - *Backup staging* once, restore into a Neon branch, run drill checks.
+11. **[YOU] Rollback**: Vercel "Instant Rollback" to the previous production deployment; Render "rollback to previous deploy"; migrations are additive (0002–0004 downgrades exist; 0001 is destructive).
 
-## Known operational limits in this staging design
-- Neon Free: first request after ≥5 min idle pays a cold start (typically sub-second to a few seconds); 100 CU-h cap ⇒ suspension, not billing, if exceeded. Watch usage in the Neon console during the first week.
-- Render Key Value Free: no persistence; a restart signs everyone out and resets rate-limit counters (fail-closed policies keep expensive endpoints protected while Redis is down).
+## Known operational limits
+- Neon Free: cold start after ≥ 5 min idle; 100 CU-h/month cap ⇒ suspension (not billing) if exceeded.
+- Render Key Value Free: no persistence — restart signs everyone out and resets counters.
+- Vercel gateway: request/response bodies ≤ 4.5 MB ⇒ uploads capped at 4 MB.
 - ClamAV suspended ⇒ uploads wait in `scan_pending` (never indexed unscanned).
-- Single API and worker instance: no HA; acceptable for staging only.
+- Single API and worker instance; no HA (staging only).
 
-## Not in scope for staging approval
-Production resources, paid Neon/Render plans beyond the above, any real customer data, enabling AI providers, merging PR #1.
+## Not in scope
+Production resources, paid plans beyond A4/A6 once approved, a custom domain, real customer data, enabling AI providers.

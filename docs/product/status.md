@@ -1,4 +1,4 @@
-# Product status (after Phase 1.6 review; staging NOT provisioned)
+# Product status (Phase 1.7, 2026-11-03; frontend on Vercel, backend NOT hosted, staging NOT provisioned)
 
 Legend: **V** implemented and verified (automated test or measured) · **E** implemented, not externally verified · **P** partial · **N** not implemented · **B** blocked by credentials/account.
 
@@ -9,9 +9,9 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 | OIDC Authorization Code + PKCE, BFF encrypted sessions, CSRF, revocation, MFA gate | V against a **local test issuer** (24 tests + real-browser E2E) ; **B** against Auth0 | see docs/operations/auth0-setup.md |
 | Session restore on refresh, expiry handling, sign-out cache wipe | V | browser E2E |
 | Rate limits (per user/IP/org), atomic across replicas, concurrency cap for AI, bounded job queue | V | concurrency tests with 4 limiter instances; limits untuned (no capacity claim) |
-| Worker reliability: two workers, crash recovery, retries, dead-letter, scanner-hold | V | tests |
+| Worker reliability: two workers, crash recovery, retries, dead-letter, scanner-hold, prompt SIGTERM | V | tests; Phase 1.7 fixed SIGTERM waiting up to 30 s inside BLPOP (now ≈ 1–2 s; regression test) |
 | Upload validation + **sandboxed parser** (rlimits, timeout, netns when available, socket block) | V | memory/timeout/network tests. `unshare` isolation depends on host kernel; not a seccomp/container sandbox |
-| Malware scanning (clamd INSTREAM client, hold-until-scanned, quarantine, truthful statuses) | V protocol with a fake clamd; **B** against real ClamAV | no ClamAV available here; `scan_status` never claims clean without a scanner OK |
+| Malware scanning (clamd INSTREAM client, hold-until-scanned, quarantine, truthful statuses) | V against **real ClamAV 1.5.4** (local container, signatures 2026-11-01): EICAR ⇒ infected, clean ⇒ clean, scanner down ⇒ unavailable (never clean); full acceptance run with `EXPECT_SCAN=clean`; **B** hosted ClamAV (A6) | `scan_status` never claims clean without a scanner OK |
 | PDF / DOCX / XLSX / CSV / TXT parsing with provenance | V on programmatically generated real files | no scanned/OCR support (N); no very large real-world corpus tested |
 | Object storage | V LocalStorage + S3 protocol vs moto emulator; tenant-prefix guard; **B** real R2 | no signed URLs issued (files are never directly downloadable) |
 | AI adapters (Anthropic/OpenAI): request/response schema, timeout/429/5xx failover, token accounting | V with `httpx.MockTransport`; **B** live APIs | no live call was made; grounding tested with a fake provider |
@@ -20,7 +20,7 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 | Explanation history (versioned, canonical insight untouched) | V | |
 | Decisions/approvals/verified execution; direct low-risk tasks labelled and audited | V | docs/security/action-risk-matrix.md |
 | Frontend: perf, a11y basics, CSP | V: strict CSP (no inline scripts) 0 violations in browser; contrast tests; responsive overflow checks 320–1440 | no screen-reader audit, no Lighthouse/CWV, no list virtualization (cursor pages of 20 instead) |
-| Edge Worker + wrangler config | V bundle/config via `wrangler deploy --dry-run`; **B** deploy | |
+| Same-origin API gateway on Vercel (`apps/web/api/gateway.ts`, ADR 0007) | V 25 unit tests + full acceptance run through the same code in a local Vercel emulation; **B** on Vercel (no API host yet) | uploads capped at 4 MB (Vercel 4.5 MB body limit). Cloudflare Worker kept, not deployed |
 | Render blueprint, Dockerfile (runtime-only lock), deploy/backup workflows | **E** checked against vendor specs; **not built/deployed** (no Docker daemon here) | |
 | Neon/R2 driver compatibility | V URL translation + pooler-mode queries; R2 checksum config | live services not reached |
 | Supply chain | V runtime lock drift check, pip-audit (tested + runtime), CycloneDX SBOMs, Dependabot | actions not SHA-pinned; no hash pinning |
@@ -28,7 +28,7 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 | Cloudflare WAF/Turnstile/rate-limit rules, origin restriction | B (dashboard) | shared-secret origin auth implemented and tested |
 | Backups | V (drill in CI: dump as read-only BYPASSRLS role → restore → verify counts/RLS/isolation); **B** staging schedule | docs/operations/backups.md |
 | Monitoring | V metrics endpoint + counters + queue snapshot; **N** alert delivery/tracing | docs/operations/observability.md |
-| Staging acceptance test (17 steps) | V as **local rehearsal** (test issuer, no ClamAV); **B** live | tests/staging/acceptance.mjs |
+| Staging acceptance test (17 steps) | V as **local rehearsal** through the gateway with real ClamAV (`tests/staging/run_local_rehearsal.sh`; test issuer); **B** live (A4, A6, A9) | tests/staging/acceptance.mjs |
 | Connectors, knowledge graph, pgvector/hybrid search, OCR, agents | N | pgvector path documented only |
 
 ## Known limitations
