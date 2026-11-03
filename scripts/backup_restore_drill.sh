@@ -14,6 +14,13 @@ restore_url() { echo "$ADMIN_URL" | sed -E "s#/[^/?]+(\?|$)#/$SCRATCH\1#"; }
 # Counting must use a BYPASSRLS reader on BOTH sides: under FORCE RLS even the owner sees zero tenant rows.
 restore_reader_url() { echo "$BACKUP_URL" | sed -E "s#/[^/?]+(\?|$)#/$SCRATCH\1#"; }
 
+# Version guard: a dump made by a NEWER client emits settings (e.g. transaction_timeout, PG17+) that an OLDER server rejects on restore.
+CLIENT_MAJOR=$(pg_restore --version | grep -oE '[0-9]+' | head -1)
+SERVER_MAJOR=$(psql "$ADMIN_URL" -Atc "SHOW server_version_num" | cut -c1-2)
+if [ "$CLIENT_MAJOR" -gt "$SERVER_MAJOR" ]; then
+  echo "pg client $CLIENT_MAJOR is newer than server $SERVER_MAJOR: install postgresql-client-$SERVER_MAJOR (restores must use a matching client)" >&2; exit 2
+fi
+echo "   client $CLIENT_MAJOR / server $SERVER_MAJOR"
 echo "1/5 dump (custom format) as backup role"
 pg_dump "$BACKUP_URL" -Fc -f "$DUMP"   # set -e + no pipe: a failed dump aborts the drill
 test -s "$DUMP"

@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17   # matches Neon staging (PG 17)
         env: { POSTGRES_PASSWORD: postgres }
         ports: ["5432:5432"]
         options: >-
@@ -74,7 +74,7 @@ jobs:
     needs: [api, web]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17   # matches Neon staging (PG 17)
         env: { POSTGRES_PASSWORD: postgres }
         ports: ["5432:5432"]
         options: >-
