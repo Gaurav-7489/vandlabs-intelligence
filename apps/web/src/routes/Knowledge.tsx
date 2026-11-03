@@ -1,7 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { Badge, Card, Empty, ErrorPanel, PageHeader, SkeletonRows, stateTone, useToast, errorText } from "../components/ui";
-import { api, type Doc } from "../lib/api";
+import { api, type Doc, type Page } from "../lib/api";
 import { fmtBytes, fmtDateTime, humanize } from "../lib/format";
 import { useCursorList } from "../lib/useCursorList";
 import { useOrgKey, useSession } from "../lib/session";
@@ -39,8 +39,18 @@ function DocActions({ d }: { d: Doc }) {
   const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === "documents" || q.queryKey[1] === "insights" });
   const reprocess = useMutation({ mutationFn: () => api<Doc>(`/documents/${d.id}/reprocess`, { method: "POST" }),
     onSuccess: () => { toast("ok", `“${d.filename}” queued for reprocessing.`); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
+  const isDocs = (q: { queryKey: readonly unknown[] }) => q.queryKey[1] === "documents";
   const remove = useMutation({ mutationFn: () => api(`/documents/${d.id}`, { method: "DELETE" }),
-    onSuccess: () => { toast("ok", `“${d.filename}” deleted with its derived records.`); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
+    onSuccess: async () => {
+      // The server has CONFIRMED the delete (204). A list fetch started before the delete committed (e.g. status polling)
+      // could still resolve afterwards and write the stale row back: cancel in-flight fetches, drop the row, then revalidate.
+      await qc.cancelQueries({ predicate: isDocs });
+      qc.setQueriesData<InfiniteData<Page<Doc>>>({ predicate: isDocs }, (old) =>
+        old && { ...old, pages: old.pages.map((pg) => ({ ...pg, items: pg.items.filter((x) => x.id !== d.id) })) });
+      toast("ok", `“${d.filename}” deleted with its derived records.`);
+      void refresh();
+    },
+    onError: (e) => toast("error", errorText(e)) });
   const busy = d.status === "queued" || d.status === "processing";
   return (
     <div className="flex justify-end gap-2">

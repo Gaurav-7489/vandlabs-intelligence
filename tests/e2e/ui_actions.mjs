@@ -35,9 +35,11 @@ await drow.getByRole("button", { name: "Confirm delete" }).waitFor();
 await drow.getByRole("button", { name: "Cancel" }).click();
 assert.equal(await page.locator("tr", { hasText: fname }).count(), 1, "cancel must not delete");
 await drow.getByRole("button", { name: `Delete ${fname}` }).click();
+const afterDelete = [];
+page.on("response", async (r) => { if (/\/api\/v1\/documents(\?|$)/.test(r.url()) && r.request().method() === "GET") { try { afterDelete.push({ t: Date.now(), listed: (await r.text()).includes(fname) }); } catch {} } });
 await drow.getByRole("button", { name: "Confirm delete" }).click();
 await page.getByText(`“${fname}” deleted with its derived records.`).waitFor();
-await page.locator("tr", { hasText: fname }).waitFor({ state: "detached" });
+await page.locator("tr", { hasText: fname }).waitFor({ state: "detached" }).catch((e) => { console.log("DIAG list responses after delete:", JSON.stringify(afterDelete)); throw e; });
 step("two-step delete: cancel keeps the file; confirm removes it");
 
 await page.getByRole("link", { name: "Administration" }).click();
