@@ -1,23 +1,27 @@
 # Phase 1.7 — staging integration status (updated 2026-11-03)
 
-Only facts observed from the Claude sessions are marked verified. Nothing has been provisioned, configured or deployed
-from these sessions: no Neon, Cloudflare, Vercel, Auth0 or Render access was available (no connectors; the sandbox
-network also blocks `*.vercel.app`, `vercel.com`, `render.com`, `auth0.com`). GitHub access was read-only (clone);
-push and the GitHub API were refused for this repository.
+Current state below includes direct GitHub, Vercel, Neon and Cloudflare checks performed on 2026-11-03. Historical local results remain labelled separately.
 
-## Resource state (approved → provisioned → configured → deployed → live-verified)
-| Item | Approved | Provisioned | Configured | Deployed | Live-verified | Next / blocker |
-|---|---|---|---|---|---|---|
-| A1 Neon `shy-leaf-28061787` (PG 17, Singapore) | ✅ reuse | ✅ (owner-reported; not seen by Claude) | ❌ roles/DB | ❌ migrations | ❌ | Owner: branch-first `infra/database/neon_bootstrap.sql` → migrate → `scripts/verify_staging_db.sql`. **Check that the owner role can create a BYPASSRLS role** |
-| A2 R2 `vand-intel-staging-docs`, `vand-intel-staging-backups` | ✅ free tier | unknown | ❌ | — | ❌ | Owner: list buckets, create missing ones private, 2 scoped tokens |
-| A3 Cloudflare frontend Worker | not required | — | — | — | — | Superseded by the Vercel gateway (ADR 0007) |
-| A4 Render API + worker (Starter) | ❌ awaiting | ❌ | prepared (`render.yaml`) | ❌ | ❌ | **Decision needed** (cost below) |
-| A5 Render Key Value Free | ✅ (with A4) | ❌ | prepared | ❌ | ❌ | Created with the A4 Blueprint |
-| A6 ClamAV private service (Pro 4 GB) | ❌ awaiting | ❌ | prepared | ❌ | ❌ | **Decision needed** (cost below) |
-| A7 Auth0 (Free only) | ✅ Free | unknown | ❌ | — | ❌ | Owner: confirm Free offers OTP/WebAuthn with policy *Always*; MFA availability depends on plan per Auth0 docs |
-| A8 AI providers | ✅ disabled | — | disabled (no keys) | — | n/a | — |
-| A9 Live acceptance | ❌ awaiting | — | scripts ready | — | ❌ | After A4/A6 + owner steps |
-| Vercel project `vandlabs-intelligence` | existing | ✅ (live SPA) | gateway code ready; env vars ❌ | SPA only; gateway not deployed (branch unmerged) | ❌ | Merge PR (owner), set Production-only env vars after the API exists; **confirm plan** |
+## Resource state (approved → provisioned → configured → deployed → verified)
+| Item | Approved | Provisioned | Configured / deployed | Verified / remaining blocker |
+|---|---|---|---|---|
+| GitHub Phase 1.7 | yes | PR #14 merged | PR #15 runtime fix merged; main includes `112aee5` | API, web, secrets and e2e passed for both PRs; original file-tree integrity recorded in #14 |
+| A1 Neon `shy-leaf-28061787` | yes, reuse | verified existing Free project, PG 17 / Singapore | `vand_staging`, four SQL-created roles, revisions 0001–0004 applied on an isolated branch and then main | 28/28 verification rows pass on main; 16 tenant tables force RLS; runtime app role has no bypass/schema-create privileges |
+| A2 R2 documents/backups | yes, free allowance | both APAC buckets created | r2.dev disabled; no custom domains | private configuration verified; scoped credentials and object/backup operations pending deployment secret stores |
+| A3 Cloudflare frontend | removed | — | do not deploy | Vercel remains the frontend host |
+| A4 API + worker | pending paid decision | not created | `render.yaml` prepared | Render connection unavailable in this chat |
+| A5 Key Value | approved with A4 | not created | prepared | dependent on Render |
+| A6 ClamAV | pending paid decision | not created | prepared | dependent on Render and A6 approval |
+| A7 Auth0 | Free only | not checked | not configured | account access and genuine MFA verification required |
+| A8 AI | disabled | — | no provider keys | remains disabled |
+| A9 live acceptance | pending | — | plan/scripts ready | full live journey not run |
+| Vercel gateway | existing project | deployed on main | production deployment `dpl_3dqEZFyuZsUVjYZEYWJUJjvVdAc1` READY | homepage 200; auth/config JSON 503 while unconfigured. No gateway env vars exist; API origin/secret remain pending |
+
+## Production runtime correction
+The first merged gateway crashed with `ERR_MODULE_NOT_FOUND`: Node ESM could not resolve the extensionless `../src/edge/proxy` import. PR #15 changes it to `../src/edge/proxy.js`. A regression test transpiles the gateway/helper and loads them in a separate Node ESM process; it fails before the correction and passes after it. All 88 frontend tests, lint/types/build and GitHub's API/web/secrets/e2e checks passed. The deployed route now returns the intended fail-closed JSON 503 instead of a function crash.
+
+## Database provisioning evidence
+The project owner passed the CREATEROLE/CREATEDB/BYPASSRLS preflight. Roles were created with SQL, as required by `neon_bootstrap.sql`; API-created roles inherit `neon_superuser` and are unsuitable for runtime use. Upgrade statements from committed Alembic revisions 0001–0004 were applied transactionally as `vand_owner` and the revision recorded as `0004`. The read-only verification script passed 28/28 rows on both the isolated validation branch and main. Authenticated queries as `vand_app` show no bypass privilege, no schema-create privilege and zero visible users/documents without tenant context. This is database setup/security verification, not the A9 application acceptance journey. Connection-string secrets remain outside the repository and logs.
 
 ## Work in this phase (branch `feat/phase-1-7-cloud-integration`)
 | Change | Why | Evidence |
@@ -35,7 +39,7 @@ push and the GitHub API were refused for this repository.
 | deploy-staging workflow: no Cloudflare frontend; smoke test checks gateway 200 + direct-origin 403 | A3 superseded | YAML validated |
 | CLAUDE.md / HANDOFF.md (recovered from branch `claude/peaceful-mendel-j30y5u`) updated to the Vercel topology | Session continuity | — |
 
-## Fresh verification on the candidate commit (local, 2026-11-03)
+## Historical local verification on code-bearing candidate 94e496e (2026-11-03)
 | Check | Result |
 |---|---|
 | `ruff check . && mypy app` | clean (58 files) |
@@ -54,12 +58,10 @@ push and the GitHub API were refused for this repository.
 context with a throwaway Dockerfile that only adds the sandbox proxy CA/proxy settings. Render builds the committed
 Dockerfile directly (not verified on Render).
 
-**Not verified:** Auth0 (MFA entitlement, real `amr`), Neon (owner-role BYPASSRLS ability, pooler), R2, Render (build,
-private networking, suspension billing), Vercel (function runtime, `x-real-ip`, env scoping, plan).
+**Still unverified:** Auth0 entitlement/real MFA; runtime traffic through the Neon pooler; R2 object/backup operations; Render build/private networking/scanner; Vercel configured upstream forwarding, trusted client-IP behaviour and account plan. Neon owner/roles/schema and Vercel gateway startup are verified above.
 
 ## A4 / A6 approval request (re-checked 2026-11-03)
-Vendor sites are blocked from the build sandbox; figures below come from the vendors' own pages **as quoted in search
-results** on 2026-11-03. Confirm on the linked pages before approving.
+The original cost request was researched from the Claude sandbox. Current official [Render pricing](https://render.com/pricing), [billing FAQ](https://render.com/docs/faq), and [service billing explanation](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses) support the compute rates and active-second billing below. No Render resources have been created; confirm account allowances and spend controls before purchase.
 
 | Resource (all Render, region Singapore) | Plan | Price | Status of the figure | Expected staging cost |
 |---|---|---|---|---|
@@ -72,10 +74,7 @@ results** on 2026-11-03. Confirm on the linked pages before approving.
 | Disks / storage | none (no persistent disks in `render.yaml`) | — | confirmed by config | $0 |
 | **Total** | | | | **≈ $15.20/month** (fixed $14.00 + scanner hours) |
 
-**Unresolved (owner to confirm in the Render dashboard before approving):** whether a *suspended* service accrues any
-charge (no official statement found; third-party guidance implies it does not), and any minimum charge per service
-start. Worst case if the scanner is forgotten in the running state: $85/month — mitigated by suspending after each
-window and checking the Billing page weekly.
+**Cost limits:** official Render guidance bills paid compute for active seconds, and paid services run continuously until suspended. The test-window estimate assumes suspension outside those windows and no persistent disks. Confirm the account's minimums, bandwidth/build allowances and spending controls before approval. Leaving the scanner running adds about $85/month in compute; the roughly $99 combined compute scenario is not a spending cap and excludes overages.
 
 **Not part of A4/A6 (separate decisions):** Auth0 Essentials $35/month only if Free cannot enforce MFA — sources
 conflict and several state MFA is not on Free ([Auth0 MFA docs: factors depend on plan](https://auth0.com/docs/secure/multi-factor-authentication/multi-factor-authentication-factors.md));
@@ -86,7 +85,7 @@ Vercel Pro if the project is on Hobby (Hobby is limited to non-commercial person
 > Approve A4 + A6: on a Render **Hobby** workspace in Singapore, create from `render.yaml` at the approved commit:
 > `vand-api-staging` (web, Starter), `vand-worker-staging` (worker, Starter), `vand-redis-staging` (Key Value, Free),
 > `vand-clamav-staging` (private service, Pro 4 GB, **suspended except during test windows**). Expected ≈ $15.20/month;
-> hard ceiling if the scanner were left running ≈ $99/month.
+> continuous-scanner compute estimate ≈ $99/month, excluding overages; this is not a budget cap.
 
 - **Scanner schedule:** resume at the start of a test window → wait ~2 min (signatures) → test → suspend. Target ≤ 10 h/month.
 - **Pending uploads while suspended:** accepted, stored, `scan_pending`, never indexed or marked clean; retried every
@@ -107,11 +106,11 @@ Vercel Pro if the project is on Hobby (Hobby is limited to non-commercial person
 | 7 | Encrypted backup + restore | run *Backup staging*; restore into a **new Neon branch** with a temporary read token; drill checks + `scripts/verify_staging_db.sql` | counts match, RLS forced, all checks ok; branch and read token deleted afterwards |
 | 8 | Preview isolation | open a Vercel preview of the PR; `PREVIEW_URL=… live_checks.sh` | 503 `gateway_unavailable` |
 
-## Remaining blockers (only these)
-1. **GitHub write access** for Claude: the Claude GitHub App is not installed for `Gaurav-7489/vandlabs-intelligence`
-   (push 403 "not in this session's authorized repository set"; GitHub API also refused). Fix: install it at
-   https://claude.ai/connect-github and start a session with the repo selected — or push the bundle yourself.
-2. **Decisions:** A4 + A6 (≈ $15.20/month, request above); confirm the Vercel plan.
-3. **Owner steps (free):** Neon bootstrap on a branch (first check the owner role's BYPASSRLS); R2 buckets/tokens;
-   Auth0 Free tenant + real MFA test (likely not available on Free — then a decision on Essentials $35/month).
-4. **A9** live acceptance after 1–3.
+## Remaining blockers
+1. **Render connection and A4/A6 decision:** the Render integration is available but not installed/connected here. Paid resources remain unapproved and uncreated.
+2. **Auth0:** account access, Free tenant/application setup and genuine MFA test. Do not buy a plan or weaken the MFA requirement automatically.
+3. **Deployment secrets:** once the backend/secret stores are available, create scoped R2 credentials, configure API/worker/workflow secrets, confirm the intended initial platform-admin identity, and add Vercel Production-only gateway origin/secret values.
+4. **Vercel plan:** the connected project/team summaries did not expose the billing plan; verify it in account billing before commercial use.
+5. **A9:** live acceptance, scanner EICAR/outage/resume and backup restore remain pending.
+
+GitHub publication, main merges, Neon schema/role setup and private R2 bucket creation are complete. Validation branches remain available as setup evidence; no existing database or bucket data was deleted.
