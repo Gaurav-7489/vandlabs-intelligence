@@ -37,8 +37,15 @@ jobs:
       - name: Tests (real Postgres + Redis, migrations applied from scratch)
         working-directory: services/api
         env:
-          VAND_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vand_test   # superuser: privileged RLS/BYPASSRLS invariant tests
+          VAND_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vand_test   # pragma: allowlist secret  (throwaway CI container superuser)
         run: pytest -q -rs
+      - name: Backup/restore drill (dump as read-only BYPASSRLS role, restore, verify counts + RLS + isolation)
+        env:
+          PGPASSWORD: postgres
+          BACKUP_URL: postgresql://vand_backup:dev_backup_pw@localhost:5432/vand_test  # pragma: allowlist secret  (CI-only)
+          ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres  # pragma: allowlist secret  (CI-only)
+          APP_PASSWORD: dev_app_pw  # pragma: allowlist secret  (CI-only)
+        run: bash scripts/backup_restore_drill.sh
       - name: OpenAPI contract export is current (the SPA contract test reads it)
         run: python scripts/export_openapi.py | diff -u docs/api/openapi.json -
       - name: Dependency vulnerability scan
@@ -103,7 +110,7 @@ jobs:
         run: |
           (cd apps/web && npm ci && nohup npx vite --port 5173 > /tmp/vite.log 2>&1 &)
           (cd tests/e2e && npm install --no-audit --no-fund && npx playwright install --with-deps chromium)
-          sleep 5
+          bash scripts/wait_for.sh http://localhost:5173/ 120
       - name: E2E - evidence to outcome workflow (dev auth)
         run: node tests/e2e/workflow.mjs
       - name: E2E - real OIDC browser flow against test issuer

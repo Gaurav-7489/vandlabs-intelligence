@@ -48,7 +48,7 @@ services:
     name: vand-clamav-staging
     runtime: image
     image: { url: docker.io/clamav/clamav:stable }
-    plan: standard             # ClamAV needs ~2 GB RAM for signatures
+    plan: pro                  # ClamAV docs recommend 4 GB RAM (>=1.2 GiB signatures, ~2x during daily reload); 2 GB risks OOM kills. Billed per second: suspend when not testing.
     envVars: []
 keyvalue:
   - name: vand-redis-staging

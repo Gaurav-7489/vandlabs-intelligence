@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import service as audit
+from app.core import metrics
 from app.core.errors import Forbidden, Unauthorized
 from app.core.state import AppState, get_state
 from app.identity.permissions import PRIVILEGED_ROLES, ROLE_PERMISSIONS, P
@@ -85,6 +86,7 @@ async def get_identity(request: Request, state: Annotated[AppState, Depends(get_
     try:
         claims, _rec = await _claims_from_request(request, state)
     except Unauthorized:
+        await metrics.incr(state.redis, "auth.failure")
         await state.limiter.hit("auth_failure", f"ip:{ip}")
         async with state.db.bare_session() as s:
             await audit.record(s, action="auth.token_rejected", org_id=None, outcome="denied", ip=ip)

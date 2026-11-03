@@ -129,6 +129,7 @@ async def worker() -> AsyncIterator[Worker]:
     w = Worker(db=Database(make_engine(get_settings().worker_database_url)))
     yield w
     await w.db.dispose()
+    await w.redis.aclose()
 
 
 async def drain(w: Worker, limit: int = 50) -> int:

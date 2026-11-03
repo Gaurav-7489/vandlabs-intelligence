@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import delete, func, select
 
 from app.audit import service as audit
+from app.core import metrics
 from app.core.errors import NotFound, PayloadTooLarge, Unavailable
 from app.core.pagination import page
 from app.core.state import AppState, get_state
@@ -47,6 +48,7 @@ async def upload(file: Annotated[UploadFile, File()], p: Annotated[Principal, De
     try:
         await TenantStorage(state.storage, p.org_id).put(key, data)
     except StorageError:
+        await metrics.incr(state.redis, "storage.error")
         raise Unavailable("File storage is temporarily unavailable", headers={"Retry-After": "10"}) from None
     doc = Document(id=doc_id, org_id=p.org_id, filename=name, detected_type=kind, size_bytes=len(data), sha256=sha,
                    storage_key=key, status="queued", uploaded_by=p.user.id)

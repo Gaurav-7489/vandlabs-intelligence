@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from app.audit import service as audit
+from app.core import metrics
 from app.core.errors import Conflict, Unavailable
 from app.core.logging import get_logger
 from app.core.state import AppState, get_state
@@ -72,6 +73,7 @@ async def callback(request: Request, state: Annotated[AppState, Depends(get_stat
     st = request.query_params.get("state")
     raw = await state.redis.getdel(f"oidc:state:{st}") if st else None  # atomic single use: replay of a state value fails
     if raw is None or error or not code:
+        await metrics.incr(state.redis, "auth.login_failed")
         async with state.db.bare_session() as db:
             await audit.record(db, action="auth.login_failed", org_id=None, outcome="denied", ip=ip, reason=error or "bad_state")
         return _fail(state, "login_failed")
@@ -81,6 +83,7 @@ async def callback(request: Request, state: Annotated[AppState, Depends(get_stat
         ts = await state.oidc.exchange_code(code, saved["verifier"])
         claims = await state.oidc.verify_id_token(ts.id_token, saved["nonce"])
     except OidcError as e:
+        await metrics.incr(state.redis, "auth.login_failed")
         async with state.db.bare_session() as db:
             await audit.record(db, action="auth.login_failed", org_id=None, outcome="denied", ip=ip, reason=str(e)[:80])
         return _fail(state, "login_failed")

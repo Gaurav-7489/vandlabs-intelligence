@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import redis.asyncio as aioredis
 
+from app.core import metrics
 from app.core.errors import RateLimited, Unavailable
 from app.core.logging import get_logger
 
@@ -69,6 +70,7 @@ class RateLimiter:
                 raise Unavailable("Service temporarily unavailable", headers={"Retry-After": "5"}) from None
             return
         if not allowed:
+            await metrics.incr(self._redis, f"ratelimit.violation.{policy.name}")
             raise RateLimited("Rate limit exceeded", headers={"Retry-After": str(max(1, int(retry)))})
 
     async def acquire_slot(self, name: str, subject: str, max_concurrent: int, ttl: int = 120) -> str:

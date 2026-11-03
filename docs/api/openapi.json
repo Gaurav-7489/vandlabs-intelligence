@@ -2457,6 +2457,51 @@
     ]
    }
   },
+  "/api/v1/ops/metrics": {
+   "get": {
+    "operationId": "get_metrics_api_v1_ops_metrics_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "hours",
+      "required": false,
+      "schema": {
+       "default": 24,
+       "title": "Hours",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Metrics Api V1 Ops Metrics Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Metrics",
+    "tags": [
+     "ops"
+    ]
+   }
+  },
   "/api/v1/overview/deadlines": {
    "get": {
     "operationId": "deadlines_api_v1_overview_deadlines_get",

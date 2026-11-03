@@ -113,6 +113,7 @@ async def test_usage_endpoint_reports_cost_null_without_pricing(client, make_env
     w = Worker(db=Database(make_engine(get_settings().worker_database_url)))
     await drain(w)
     await w.db.dispose()
+    await w.redis.aclose()
     await client.post(f"{API}/intelligence/ask", headers=env.h("staff"), json={"question": "alpha beta"})
     item = (await client.get(f"{API}/usage/ai", headers=env.h("auditor"))).json()["items"][0]
     assert item["cost_usd"] is None and item["pricing"] is None and item["input_tokens"] == 100

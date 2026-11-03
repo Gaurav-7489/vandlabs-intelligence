@@ -1,4 +1,5 @@
 import hmac
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.ai.gateway import AIGateway
 from app.audit.router import router as audit_router
+from app.core import metrics
 from app.core.config import Settings, get_settings
 from app.core.db import Database, make_engine
 from app.core.dbsafety import check_role_safety
@@ -27,6 +29,7 @@ from app.identity.router import router as identity_router
 from app.identity.sessions import SessionStore
 from app.identity.tokens import TokenVerifier
 from app.intelligence.router import router as intelligence_router
+from app.ops.router import router as ops_router
 from app.search.router import router as search_router
 from app.tasks.router import router as tasks_router
 
@@ -56,8 +59,10 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
                 raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
         r = aioredis.from_url(s.redis_url, decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
         oidc = OidcClient(s, oidc_http) if s.auth_mode == "oidc" else None
+        gateway = ai or AIGateway(s)
+        gateway.redis = r
         app.state.vand = AppState(settings=s, db=db, limiter=RateLimiter(s.redis_url), verifier=TokenVerifier(s),
-                                  storage=make_storage(s), ai=ai or AIGateway(s), redis=r, oidc=oidc, sessions=SessionStore(r, s, oidc))
+                                  storage=make_storage(s), ai=gateway, redis=r, oidc=oidc, sessions=SessionStore(r, s, oidc))
         yield
         await app.state.vand.limiter.close()
         await r.aclose()
@@ -73,6 +78,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+        t0 = time.perf_counter()
         rid = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex
         edge_ok = bool(s.origin_auth_secret) and hmac.compare_digest(request.headers.get("x-origin-auth", ""), s.origin_auth_secret)
         request.state.edge_trusted = edge_ok or not s.origin_auth_secret
@@ -89,6 +95,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
                                           media_type="application/json")
             else:
                 resp = await call_next(request)
+            await metrics.observe_request(request.app.state.vand.redis, resp.status_code, (time.perf_counter() - t0) * 1000)
             for k, v in SECURITY_HEADERS.items():
                 resp.headers.setdefault(k, v)
             resp.headers["X-Request-ID"] = rid
@@ -99,7 +106,7 @@ def create_app(settings: Settings | None = None, ai: AIGateway | None = None, oi
 
     app.include_router(health_router)
     api = "/api/v1"
-    for r in (auth_router, identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
+    for r in (auth_router, ops_router, identity_router, documents_router, search_router, intelligence_router, decisions_router, tasks_router, audit_router):
         app.include_router(r, prefix=api)
     if s.auth_mode == "dev":  # unreachable in staging/production: Settings rejects dev mode there
         from app.identity.dev_auth import router as dev_router

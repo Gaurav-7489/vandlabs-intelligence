@@ -1,4 +1,4 @@
-# Product status (after Phase 1.5)
+# Product status (after Phase 1.6 review; staging NOT provisioned)
 
 Legend: **V** implemented and verified (automated test or measured) · **E** implemented, not externally verified · **P** partial · **N** not implemented · **B** blocked by credentials/account.
 
@@ -20,9 +20,12 @@ Legend: **V** implemented and verified (automated test or measured) · **E** imp
 | Explanation history (versioned, canonical insight untouched) | V | |
 | Decisions/approvals/verified execution; direct low-risk tasks labelled and audited | V | docs/security/action-risk-matrix.md |
 | Frontend: perf, a11y basics, CSP | V: strict CSP (no inline scripts) 0 violations in browser; contrast tests; responsive overflow checks 320–1440 | no screen-reader audit, no Lighthouse/CWV, no list virtualization (cursor pages of 20 instead) |
-| Edge Worker, `_headers`, wrangler, Render blueprint, Dockerfile, compose, CI/deploy workflows | **E** | written, **not built/deployed**; no Docker daemon here; CI not yet seen green on GitHub (see PR) |
+| Edge Worker, `_headers`, wrangler, Render blueprint, Dockerfile, compose, deploy/backup workflows | **E** | written, **not built/deployed**; no Docker daemon here |
+| CI (api, web, secrets, e2e) | V on GitHub | see PR #1 checks |
 | Cloudflare WAF/Turnstile/rate-limit rules, origin restriction | B (dashboard) | shared-secret origin auth implemented and tested |
-| Backups/DR, monitoring/alerting/tracing | N | |
+| Backups | V (drill in CI: dump as read-only BYPASSRLS role → restore → verify counts/RLS/isolation); **B** staging schedule | docs/operations/backups.md |
+| Monitoring | V metrics endpoint + counters + queue snapshot; **N** alert delivery/tracing | docs/operations/observability.md |
+| Staging acceptance test (17 steps) | V as **local rehearsal** (test issuer, no ClamAV); **B** live | tests/staging/acceptance.mjs |
 | Connectors, knowledge graph, pgvector/hybrid search, OCR, agents | N | pgvector path documented only |
 
 ## Known limitations

@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import metrics
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -108,6 +109,8 @@ class OpenAIProvider:
 
 
 class AIGateway:
+    redis: Any = None  # set by the app at startup for operational counters
+
     def __init__(self, settings: Settings, providers: list[Provider] | None = None):
         self.s = settings
         self.pricing = load_pricing(settings.ai_pricing_json)
@@ -151,6 +154,8 @@ class AIGateway:
             except Exception as exc:  # noqa: BLE001 - provider/format failure => record + try next provider
                 last = exc
                 log.warning("ai_call_failed", extra={"provider": p.name, "err": type(exc).__name__})
+                if self.redis is not None:
+                    await metrics.incr(self.redis, "ai.failed")
                 session.add(AiUsage(org_id=org_id, user_id=user_id, task=task, provider=p.name, model=p.model,
                                     prompt_version=PROMPT_VERSION, status="failed", latency_ms=int((time.monotonic() - t0) * 1000)))
                 continue
@@ -159,6 +164,9 @@ class AIGateway:
             session.add(AiUsage(org_id=org_id, user_id=user_id, task=task, provider=p.name, model=p.model,
                                 prompt_version=PROMPT_VERSION, input_tokens=c.input_tokens, output_tokens=c.output_tokens,
                                 cost_usd=cost, status="ok", latency_ms=int((time.monotonic() - t0) * 1000)))
+            if self.redis is not None:
+                await metrics.incr(self.redis, "ai.calls")
+                await metrics.incr(self.redis, "ai.tokens", c.input_tokens + c.output_tokens)
             return parsed, c
         raise AppError("AI providers failed", reason=type(last).__name__ if last else "unknown")
 
