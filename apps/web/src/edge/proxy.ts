@@ -2,7 +2,7 @@
  * Same-origin API gateway: the browser calls /api/v1/* on the web origin; this code forwards the request to the
  * private FastAPI origin and adds the shared `X-Origin-Auth` secret server-side (never in the browser bundle).
  *
- * Used by the Vercel Edge Function in `apps/web/api/gateway.ts`. Pure + dependency-free so it is unit-tested.
+ * Used by the Vercel Function (Node.js runtime) in `apps/web/api/gateway.ts`. Pure + dependency-free so it is unit-tested.
  *
  * Security properties (tested in proxy.test.ts):
  * - Fails closed (503) when unconfigured, when the origin is not https, or outside the allowed deployment env.
@@ -21,8 +21,10 @@ export interface GatewayConfig {
   maxBodyBytes?: number;
 }
 
-/** Vercel Functions reject request bodies above 4.5 MB; mirror that so the SPA always gets a JSON error. */
-export const DEFAULT_MAX_BODY_BYTES = 4.5 * 1024 * 1024;
+/** Vercel Functions reject request bodies above "4.5 MB" with a non-JSON 413. Use the stricter decimal reading
+ *  (4,500,000 bytes) so the SPA always gets a JSON error from us first. A 4 MiB file + multipart framing (< 1 KiB)
+ *  stays ~300 KB below this. */
+export const DEFAULT_MAX_BODY_BYTES = 4_500_000;
 
 export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
 

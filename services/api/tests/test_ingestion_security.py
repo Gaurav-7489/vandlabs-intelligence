@@ -117,7 +117,13 @@ class FakeClamd:
 
     async def start(self):
         async def handle(r, w):
-            assert await r.readexactly(10) == b"zINSTREAM\0"
+            cmd = await r.readuntil(b"\0")
+            if cmd == b"zPING\0":
+                w.write(b"PONG\0")
+                await w.drain()
+                w.close()
+                return
+            assert cmd == b"zINSTREAM\0"
             data = b""
             while True:
                 n = int.from_bytes(await r.readexactly(4), "big")
@@ -197,6 +203,70 @@ async def test_scanner_outage_holds_file_unindexed_then_recovers(client, make_en
     await drain(worker)
     d = (await client.get(f"{API}/documents/{r.json()['id']}", headers=env.h("viewer"))).json()
     assert d["scan_status"] == "clean" and d["chunk_count"] == 1
+
+
+async def test_scanner_hold_does_not_dead_letter_during_a_long_outage(client, make_env, worker, worker_sql):
+    """A suspended scanner (staging runs ClamAV only in test windows) must not dead-letter uploads after 4 quick retries."""
+    env = await make_env("av5")
+    _use_scanner(worker, 1, True)
+    r = await client.post(f"{API}/documents", headers=env.h("manager"), files={"file": ("long.txt", b"long outage zephyr", "text/plain")})
+    for _ in range(8):  # twice max_attempts
+        worker_sql.execute(text("UPDATE jobs SET run_at = now() WHERE status='retry_scheduled'"))
+        worker_sql.connection.commit()
+        await drain(worker)
+    st = worker_sql.execute(text("SELECT status, attempts, run_at > now() + interval '20 minutes', last_error FROM jobs "
+                                 "WHERE payload->>'document_id' = :d AND kind='ingest_document'"), {"d": r.json()["id"]}).one()
+    assert st[0] == "retry_scheduled" and st[1] == 0 and st[2] is True and st[3].startswith("held:"), st
+    d = (await client.get(f"{API}/documents/{r.json()['id']}", headers=env.h("viewer"))).json()
+    assert d["status"] == "scan_pending" and d["chunk_count"] == 0
+
+
+async def test_scanner_hold_dead_letters_after_max_age_and_stays_unindexed(client, make_env, worker, worker_sql):
+    env = await make_env("av6")
+    _use_scanner(worker, 1, True)
+    r = await client.post(f"{API}/documents", headers=env.h("manager"), files={"file": ("old.txt", b"very old upload", "text/plain")})
+    worker_sql.execute(text("UPDATE jobs SET created_at = now() - interval '8 days' WHERE payload->>'document_id' = :d"), {"d": r.json()["id"]})
+    worker_sql.connection.commit()
+    await drain(worker)
+    st = worker_sql.execute(text("SELECT status FROM jobs WHERE payload->>'document_id' = :d AND kind='ingest_document'"), {"d": r.json()["id"]}).scalar_one()
+    assert st == "dead_letter"
+    d = (await client.get(f"{API}/documents/{r.json()['id']}", headers=env.h("viewer"))).json()
+    assert d["status"] == "scan_pending" and d["chunk_count"] == 0  # never indexed unscanned
+
+
+async def test_idle_worker_releases_holds_when_scanner_answers_again(client, make_env, worker, clamd, monkeypatch):
+    """Resume = start the scanner. The idle worker PINGs it (no DB) and processes held uploads without operator action."""
+    from app.core.db import Database, make_engine
+    from app.core.config import get_settings
+    from app.worker import Worker
+    env = await make_env("av7")
+    await drain(worker)
+    w = Worker(db=Database(make_engine(get_settings().worker_database_url)))
+    _use_scanner(w, 1, True)
+    monkeypatch.setattr(w.s, "worker_idle_sweep_seconds", 3600)
+    monkeypatch.setattr(w.s, "scan_probe_seconds", 1)
+    task = asyncio.create_task(w.run_forever())
+    try:
+        r = await client.post(f"{API}/documents", headers=env.h("manager"), files={"file": ("resume.txt", b"resume zephyr", "text/plain")})
+        doc = r.json()["id"]
+        for _ in range(40):
+            await asyncio.sleep(0.25)
+            if (await client.get(f"{API}/documents/{doc}", headers=env.h("viewer"))).json()["status"] == "scan_pending":
+                break
+        assert (await client.get(f"{API}/documents/{doc}", headers=env.h("viewer"))).json()["status"] == "scan_pending"
+        probe = w.s.scan_probe_seconds
+        _use_scanner(w, clamd.port, True)  # scanner resumed
+        w.s.scan_probe_seconds, w.s.worker_idle_sweep_seconds = probe, 3600
+        d = {}
+        for _ in range(60):
+            await asyncio.sleep(0.25)
+            d = (await client.get(f"{API}/documents/{doc}", headers=env.h("viewer"))).json()
+            if d["scan_status"] == "clean":
+                break
+        assert d["scan_status"] == "clean" and d["chunk_count"] == 1, d
+    finally:
+        w._stop.set()
+        await asyncio.wait_for(task, 10)
 
 
 async def test_without_scanner_in_dev_status_is_not_performed_never_clean(client, make_env, worker):

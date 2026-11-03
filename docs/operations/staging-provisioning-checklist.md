@@ -2,7 +2,8 @@
 
 A checkbox or approval here is **not** proof that a resource exists. "Exists" below means the owner reported it as
 verified in their own account; nothing in this file was provisioned from a Claude session (no Neon, Cloudflare,
-Vercel, Auth0 or Render access was available to it). Prices: vendor pages read 2026-11-03; re-check before purchase.
+Vercel, Auth0 or Render access was available to it). Full state table (approved/provisioned/configured/deployed/
+live-verified) and the A4/A6 cost request: `docs/operations/phase-1-7-integration.md`. Prices: re-check before purchase.
 Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done once access is granted.
 
 ## Approvals and actual state
@@ -11,9 +12,9 @@ Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done o
 | A1 | Neon project `vandlabs-intelligence-staging` (id `shy-leaf-28061787`, PG 17, `aws-ap-southeast-1`, org `Gaurav`) | ✅ approved | **Exists** (owner-verified). Roles, migrations, RLS checks **not yet done** (step 2) | $0 Free |
 | A2 | R2 buckets `vand-intel-staging-docs`, `vand-intel-staging-backups` + scoped tokens, existing Cloudflare account | ✅ approved (free tier) | Unknown — check before creating (step 3) | $0 within free tier |
 | A3 | Cloudflare **frontend** Worker | ✅ approved (free) | **Superseded — do not deploy.** Vercel already hosts the SPA; `/api/v1/*` now goes through the Vercel gateway function (ADR 0007). `apps/web/worker/` is kept only as an optional future edge | — |
-| A4 | Python API + worker hosting (Render Starter ×2) | ❌ **not approved** | Not created. **Blocks every live backend step** | ≈ $14/mo |
+| A4 | Python API + worker hosting (Render Starter ×2, Hobby workspace) | ❌ **not approved** | Not created. **Blocks every live backend step** | $14/mo ($7 + $7, prorated); +$25/mo only if a Pro workspace is required |
 | A5 | Redis (Render Key Value Free) | ✅ approved (free) | **Deferred**: only reachable from Render services, so it is created together with A4 | $0 |
-| A6 | ClamAV private service | ❌ **not approved** | Not created. Staging config refuses to start without a scanner | ≈ $0.12/h; ≈ $85/mo if left on |
+| A6 | ClamAV private service (Pro 4 GB), suspended outside test windows | ❌ **not approved** | Not created. Staging config refuses to start without a scanner | $85/mo prorated ≈ $0.116/h ⇒ ≈ $1.20 for 10 h/mo |
 | A7 | Auth0 staging tenant, **Free plan only** | ✅ approved (Free) | Unknown. If Free cannot require MFA → stop and ask; do not buy Essentials | $0 (Essentials $35/mo needs a new approval) |
 | A8 | AI providers disabled (no keys) | ✅ approved | In effect by default (no keys in config) | $0 |
 | A9 | Live 17-step acceptance run with synthetic users | ⏳ prepare only | Prepared and **rehearsed locally** (passes); live run needs approval after A4/A6 | — |
@@ -23,8 +24,9 @@ Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done o
 2. **[YOU/CLAUDE] Neon (A1, exists)** — do **not** create another project.
    - Console → project `shy-leaf-28061787` → Branches: confirm the default branch and database name (`neondb` unless renamed).
    - Compute → *Scale to zero*: on Free it is fixed at 5 min and cannot be disabled (Neon docs). `suspend_timeout_seconds: 0` in the creation response means "plan default" (not "never"); confirm the console shows 5 min. The idle worker does not poll Postgres (Redis BLPOP + 30 min sweep, `VAND_WORKER_IDLE_SWEEP_SECONDS=1800`), so compute can suspend.
-   - As the project owner, run `infra/database/roles.sql` **with strong generated passwords** (replace every `dev_*_pw`). Check `\du`: `vand_app`/`vand_worker` must be NOSUPERUSER, NOBYPASSRLS and not members of `neon_superuser`. `vand_backup` is BYPASSRLS read-only (`SELECT` only; verify it cannot `INSERT`).
-   - Migrations: step 6. Record URLs in the secret manager only: owner direct URL (migrations), pooled `vand_app` and `vand_worker` URLs, direct `vand_backup` URL.
+   - **Branch first**: create a throwaway branch, run `infra/database/neon_bootstrap.sql` there as the project owner role over the direct endpoint (passwords via psql variables, see the file header), run migrations as `vand_owner` against `vand_staging`, then `scripts/verify_staging_db.sql` — every row `ok = t`. Delete the branch and repeat on the default branch with **new** generated passwords kept only in the secret manager.
+   - The bootstrap's pre-flight row shows whether the owner role has BYPASSRLS. Without it, `vand_backup` cannot be created (PostgreSQL rule; tested): the script then fails atomically — **stop and report**, do not weaken RLS.
+   - Record URLs in the secret manager only: direct `vand_owner` (migrations, GitHub env secret), pooled `vand_app` and `vand_worker` (Render), direct `vand_backup` (backup workflow).
 3. **[YOU] R2 (A2)**: list buckets first; create only the two missing ones, private (no r2.dev public URL, no custom domain), location hint APAC. Tokens: (a) Object Read & Write on `vand-intel-staging-docs` only → API + worker; (b) Object Write on `vand-intel-staging-backups` only → backup workflow; (c) **restore** needs Object Read on backups — create it only when a restore drill runs, then revoke. Enable lifecycle rule on backups (e.g. delete after 35 days).
 4. **[YOU] Auth0 (A7, Free)**: follow `docs/operations/auth0-setup.md`. First check Security → Multi-factor Auth: can OTP/WebAuthn be set to *Always*? Log in once with MFA and confirm the ID token has `amr: ["mfa"]`. If not available on Free → **stop**, report, do not weaken `VAND_REQUIRE_MFA_FOR_PRIVILEGED`. Application: Regular Web App; Allowed Callback `https://vandlabs-intelligence.vercel.app/api/v1/auth/callback`; Allowed Logout `https://vandlabs-intelligence.vercel.app/`; Web Origin same origin. Synthetic users: requester, approver, auditor, outsider (separate org), owner (MFA enrolled).
 5. **[APPROVE A4 + A6] Python hosting**: see `docs/operations/phase-1-7-integration.md` §Hosting. With Render: connect repo, apply `render.yaml`, fill every `sync: false` var from the secret manager. Generate `VAND_SESSION_ENCRYPTION_KEY` (Fernet) and `VAND_ORIGIN_AUTH_SECRET` (≥ 32 random chars). Pooled Neon URLs + `VAND_DB_DISABLE_STATEMENT_CACHE=true`. No owner/migration URL in the runtime env (the app refuses to start).
@@ -36,7 +38,10 @@ Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done o
     - `curl https://<API host>/api/v1/auth/session` ⇒ 403 (direct origin refused); `https://vandlabs-intelligence.vercel.app/api/v1/auth/session` ⇒ 200 `{"authenticated":false}`.
     - Preview deployment `/api/v1/auth/session` ⇒ 503 `gateway_unavailable`.
     - `tests/staging/acceptance.mjs` with `BASE_URL=https://vandlabs-intelligence.vercel.app IDP=auth0 EXPECT_SCAN=clean`.
-    - EICAR upload ⇒ quarantined, not searchable; 4.2 MB file ⇒ clear "larger than 4 MB" message; scanner suspended ⇒ `scan_pending`, resumed ⇒ processed.
+    - `tests/staging/live_checks.sh` (WEB_URL, API_URL, PREVIEW_URL, ORIGIN_AUTH_SECRET in env): gateway, direct-origin 403, traversal, 413, preview 503, `/readyz` db_role.
+    - `tests/staging/scanner_checks.mjs` with `OUTAGE=1`: EICAR quarantined + unsearchable; suspend ClamAV ⇒ `scan_pending`, unindexed; resume ⇒ processed automatically.
+    - In the SPA, a 4.2 MB file ⇒ "larger than 4 MB … not uploaded".
+    - `scripts/verify_staging_db.sql` on the default branch after migrations.
     - *Backup staging* once, restore into a Neon branch, run drill checks.
 11. **[YOU] Rollback**: Vercel "Instant Rollback" to the previous production deployment; Render "rollback to previous deploy"; migrations are additive (0002–0004 downgrades exist; 0001 is destructive).
 

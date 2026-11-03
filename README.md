@@ -3,7 +3,7 @@
 Enterprise organizational-intelligence platform: it sits above a company's existing systems and turns scattered records into
 **evidence → insight → decision → approved action → verified outcome**.
 
-> **Status: Phase 1.6 — CI green, staging configuration prepared, NOT deployed, NOT production-ready.** Current state and next steps: [docs/HANDOFF.md](docs/HANDOFF.md).
+> **Status: Phase 1.7 — SPA live on Vercel (API gateway prepared), backend NOT hosted, staging NOT provisioned, NOT production-ready.** Current state and next steps: [docs/HANDOFF.md](docs/HANDOFF.md).
 > See [docs/product/status.md](docs/product/status.md) for exactly what is implemented, tested, partial, or blocked.
 
 ## What works today (verified by tests in this repo)
@@ -52,7 +52,7 @@ The local sign-in form exists only when `VAND_AUTH_MODE=dev`; the API refuses th
 ## Tests
 
 ```bash
-cd services/api && pytest -q                 # 144 tests, real Postgres + Redis, migrations applied from scratch
+cd services/api && pytest -q                 # 151 tests, real Postgres + Redis, migrations applied from scratch
 cd services/api && ruff check . && mypy app
 cd apps/web && npm run typecheck && npm run lint && npm test && npm run build
 node tests/e2e/workflow.mjs                  # needs API + worker + web running and seeded demo data

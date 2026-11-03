@@ -70,6 +70,35 @@ async def fail(session: AsyncSession, job_id: UUID, error: str) -> str:
     return str(r)
 
 
+HOLD_PREFIX = "held:"
+
+
+async def hold(session: AsyncSession, job_id: UUID, error: str, retry_s: int, max_age_s: int) -> str:
+    """Scanner hold: retry later WITHOUT consuming a normal attempt (a suspended scanner must not dead-letter uploads
+    within minutes); dead-letter only once the job is older than max_age_s. Returns the new status."""
+    r = (await session.execute(text("""
+        UPDATE jobs SET
+          status = CASE WHEN created_at < now() - make_interval(secs => :max_age) THEN 'dead_letter' ELSE 'retry_scheduled' END,
+          attempts = greatest(attempts - 1, 0),
+          run_at = now() + make_interval(secs => :retry),
+          last_error = :e, locked_at = NULL, updated_at = now()
+        WHERE id = :id RETURNING status"""), {"id": job_id, "e": (HOLD_PREFIX + " " + error)[:2000], "retry": retry_s, "max_age": max_age_s})).scalar_one()
+    return str(r)
+
+
+async def count_holds(session: AsyncSession) -> int:
+    return int((await session.execute(text(
+        "SELECT count(*) FROM jobs WHERE status = 'retry_scheduled' AND last_error LIKE :p"), {"p": HOLD_PREFIX + "%"})).scalar_one())
+
+
+async def release_holds(session: AsyncSession) -> int:
+    """Make every scanner-held job runnable now (called when the scanner answers again)."""
+    rows = (await session.execute(text(
+        "UPDATE jobs SET run_at = now(), updated_at = now() WHERE status = 'retry_scheduled' AND last_error LIKE :p RETURNING id"),
+        {"p": HOLD_PREFIX + "%"})).all()
+    return len(rows)
+
+
 async def wake_worker(redis: Any) -> None:
     """Tell an idle worker there is work (it blocks on Redis instead of polling Postgres). Best effort: the worker's
     periodic sweep still finds the job if this signal is lost."""

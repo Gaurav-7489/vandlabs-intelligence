@@ -26,6 +26,13 @@ async def check_role_safety(session: AsyncSession) -> DbSafety:
         r.problems.append("role is a superuser")
     if row[2]:
         r.problems.append("role has BYPASSRLS")
+    # Role attributes are not inherited, but a member can `SET ROLE` to a privileged role (e.g. Neon's console-created
+    # roles are members of `neon_superuser`). Any membership path to such a role is an RLS bypass.
+    escalations = (await session.execute(text(
+        "SELECT r.rolname FROM pg_roles r WHERE r.rolname <> current_user AND pg_has_role(current_user, r.oid, 'MEMBER') "
+        "AND (r.rolsuper OR r.rolbypassrls OR r.rolname IN ('neon_superuser', 'pg_write_all_data', 'pg_read_all_data'))"))).scalars().all()
+    if escalations:
+        r.problems.append(f"role is a member of privileged role(s): {', '.join(sorted(escalations))}")
     owned = (await session.execute(text(
         "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tableowner = current_user AND tablename = ANY(:t)"),
         {"t": list(TENANT_TABLES)})).scalars().all()

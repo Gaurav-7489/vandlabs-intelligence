@@ -4,7 +4,7 @@ Read `docs/HANDOFF.md` first: it holds the current state, verified results, open
 
 ## Project in one paragraph
 Enterprise organizational-intelligence platform. Multi-tenant FastAPI modular monolith (`services/api`, worker = `python -m app.worker`)
-+ React/Vite/TS/Tailwind SPA (`apps/web`, served by a Cloudflare Worker that proxies `/api/*`). PostgreSQL (Neon in staging) with
++ React/Vite/TS/Tailwind SPA (`apps/web`, hosted on the existing Vercel project; a Vercel Function gateway proxies `/api/v1/*` to the API — ADR 0007). PostgreSQL (Neon in staging) with
 FORCE row-level security, Redis (Render Key Value) for sessions/rate limits/worker wake-up, R2 for documents. First workflow:
 upload → malware scan → sandboxed parse → risk insight → decision → approval by a different user → verified task → outcome → audit.
 
@@ -25,6 +25,7 @@ upload → malware scan → sandboxed parse → risk insight → decision → ap
   `vand_backup` is read-only BYPASSRLS for pg_dump only. Owner credentials must never be in the runtime environment.
 - Every tenant table (incl. `users`) has RLS ENABLED + FORCED; tenant context via `set_config('app.org_id', …, true)`.
 - Audit log is append-only. Approver ≠ requester. Task execution is idempotent and server-verified.
+- The origin secret is server-side only (Vercel Production env + API env); never a `VITE_*` variable. Uploads ≤ 4 MB (Vercel body limit).
 - Staging/production settings refuse dev auth, http origins, local storage, missing scanner, short origin secret.
 
 ## Commands
@@ -34,4 +35,5 @@ cd apps/web && npm run typecheck && npm run lint && npm test && npm run build
 bash scripts/backup_restore_drill.sh                               # PG_DOCKER_IMAGE=postgres:17 when local client differs
 python scripts/export_openapi.py > docs/api/openapi.json           # after any API change (CI checks freshness)
 python scripts/check_runtime_lock.py                               # runtime lock must match tested lock
+bash tests/staging/run_local_rehearsal.sh                          # full-stack rehearsal through the gateway (see header)
 ```

@@ -32,6 +32,9 @@ envVarGroups:
       - { key: VAND_CLAMD_PORT, value: "3310" }
       - { key: VAND_ANTHROPIC_API_KEY, sync: false }        # optional; leave empty to keep AI disabled
       - { key: VAND_WORKER_IDLE_SWEEP_SECONDS, value: "1800" }  # idle worker waits on Redis; lets Neon Free scale to zero
+      - { key: VAND_PARSER_MEMORY_MB, value: "256" }        # Starter = 512 MB total: sandbox limit must trip before the container OOMs (4 MB CSV/XLSX peak ~255 MB RSS, measured)
+      - { key: VAND_SCAN_HOLD_RETRY_SECONDS, value: "1800" }  # uploads held while ClamAV is suspended: fallback retry (each retry wakes Neon)
+      - { key: VAND_SCAN_PROBE_SECONDS, value: "60" }       # while holds exist the worker PINGs clamd (no DB) and releases them when it answers
 
 services:
   - type: web
@@ -69,7 +72,7 @@ services:
     name: vand-clamav-staging
     runtime: image
     image: { url: docker.io/clamav/clamav:stable }
-    plan: pro                  # ClamAV docs: ~4 GB RAM (>=1.2 GiB signatures, ~2x during reload). Suspend when idle (billed per second).
+    plan: pro                  # 4 GB. ClamAV Docker docs: minimum 3 GiB, configure 4 GiB (signature reload temporarily doubles RAM). Keep SUSPENDED outside test windows.
     region: singapore
 
   - type: keyvalue
