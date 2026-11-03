@@ -14,6 +14,7 @@ def main() -> None:
     email = sys.argv[2].strip().lower()
     eng = create_engine(os.environ.get("OWNER_DATABASE_URL") or get_settings().migration_database_url)
     with eng.begin() as c:
+        c.execute(text("SELECT set_config('app.identity_resolution', 'on', true)"))  # users has FORCE RLS
         c.execute(text("INSERT INTO users (email, is_platform_admin) VALUES (:e, true) "
                        "ON CONFLICT (email) DO UPDATE SET is_platform_admin = true"), {"e": email})
         c.execute(text("INSERT INTO audit_events (action, outcome, metadata) VALUES ('platform.admin_granted', 'success', cast(:m as jsonb))"),

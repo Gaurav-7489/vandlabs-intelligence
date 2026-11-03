@@ -19,9 +19,10 @@ from app.models import Membership, User
 
 
 def client_ip(request: Request, hops: int) -> str | None:
-    fwd = request.headers.get("cf-connecting-ip") or ""
-    if fwd and getattr(request.state, "edge_trusted", False):  # spoofable unless the edge authenticated itself
-        return fwd.strip()
+    if getattr(request.state, "edge_trusted", False):  # these headers are spoofable unless the edge authenticated itself
+        fwd = request.headers.get("x-vand-client-ip") or request.headers.get("cf-connecting-ip") or ""
+        if fwd:
+            return fwd.strip()
     parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     if parts and hops > 0:
         return parts[max(0, len(parts) - hops)]
@@ -91,7 +92,7 @@ async def get_identity(request: Request, state: Annotated[AppState, Depends(get_
         async with state.db.bare_session() as s:
             await audit.record(s, action="auth.token_rejected", org_id=None, outcome="denied", ip=ip)
         raise
-    async with state.db.bare_session() as s:
+    async with state.db.identity_session() as s:
         user = (await s.execute(select(User).where(User.subject == claims.subject))).scalar_one_or_none()
         if user is None and claims.email and claims.email_verified:
             # Bind an invited (subject-less) user to this identity only when the IdP asserts a verified email.

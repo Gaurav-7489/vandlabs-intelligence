@@ -26,3 +26,4 @@ appendonlydir/
 *.pid
 .redis/
 tests/e2e/node_modules/
+sbom-*.cdx.json

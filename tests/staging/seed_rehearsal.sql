@@ -1,6 +1,7 @@
 -- Synthetic orgs/users for a LOCAL rehearsal of acceptance.mjs (test issuer). Run as vand_owner against the dev DB.
 BEGIN;
 SELECT set_config('app.platform','true',true);
+SELECT set_config('app.identity_resolution','on',true);
 INSERT INTO organizations (id,name,slug) VALUES ('22222222-2222-2222-2222-222222222222','Rehearsal Org A (synthetic)','rehearsal-a'),
                                                 ('33333333-3333-3333-3333-333333333333','Rehearsal Org B (synthetic)','rehearsal-b') ON CONFLICT DO NOTHING;
 INSERT INTO users (email) VALUES ('req@rehearsal.example.com'),('appr@rehearsal.example.com'),('aud@rehearsal.example.com'),('out@rehearsal.example.com') ON CONFLICT DO NOTHING;

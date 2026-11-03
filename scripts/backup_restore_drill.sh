@@ -39,7 +39,7 @@ DST=$(psql "$(restore_reader_url)" -Atc "$q_counts")
 echo "   identical: $SRC" | cut -c1-200
 
 echo "4/5 verify security structure survived"
-psql "$(restore_url)" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace s ON s.oid=c.relnamespace WHERE s.nspname='public' AND c.relkind='r' AND c.relname<>'alembic_version' AND NOT (c.relrowsecurity AND c.relforcerowsecurity) AND c.relname<>'users'" | grep -qx 0 || { echo "RLS NOT FORCED on some table"; exit 1; }
+psql "$(restore_url)" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace s ON s.oid=c.relnamespace WHERE s.nspname='public' AND c.relkind='r' AND c.relname<>'alembic_version' AND NOT (c.relrowsecurity AND c.relforcerowsecurity)" | grep -qx 0 || { echo "RLS NOT FORCED on some table"; exit 1; }
 SRC_POL=$(psql "$BACKUP_URL" -Atc "SELECT count(*) FROM pg_policies WHERE schemaname='public'"); DST_POL=$(psql "$(restore_url)" -Atc "SELECT count(*) FROM pg_policies WHERE schemaname='public'")
 [ "$SRC_POL" = "$DST_POL" ] || { echo "POLICY COUNT MISMATCH $SRC_POL vs $DST_POL"; exit 1; }
 psql "$(restore_url)" -Atc "SELECT count(*) FROM pg_trigger WHERE tgname IN ('audit_no_update','audit_no_truncate')" | grep -qx 2 || { echo "AUDIT TRIGGERS MISSING"; exit 1; }
@@ -51,5 +51,7 @@ APP_URL="postgresql://vand_app:${APP_PASSWORD}@${HOSTPART}/${SCRATCH}"
 TOTAL=$(psql "$(restore_reader_url)" -Atc "SELECT count(*) FROM documents")
 SEEN=$(psql "$APP_URL" -Atc "SELECT count(*) FROM documents")
 [ "$SEEN" = "0" ] || { echo "ISOLATION BROKEN: app role sees $SEEN rows without tenant context"; exit 1; }
-echo "   documents: $TOTAL rows in restore; app role without tenant context sees $SEEN"
+USERS_SEEN=$(psql "$APP_URL" -Atc "SELECT count(*) FROM users")
+[ "$USERS_SEEN" = "0" ] || { echo "ISOLATION BROKEN: app role sees $USERS_SEEN users without context"; exit 1; }
+echo "   documents: $TOTAL rows in restore; app role without tenant context sees $SEEN documents and $USERS_SEEN users"
 echo "DRILL PASSED ($SCRATCH dropped on exit)"

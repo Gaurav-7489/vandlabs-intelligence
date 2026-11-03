@@ -39,6 +39,10 @@ jobs:
         env:
           VAND_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vand_test   # pragma: allowlist secret  (throwaway CI container superuser)
         run: pytest -q -rs
+      - name: Postgres client matching the server major (17) for dump/restore
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - name: Backup/restore drill (dump as read-only BYPASSRLS role, restore, verify counts + RLS + isolation)
         env:
           PGPASSWORD: postgres
@@ -48,9 +52,18 @@ jobs:
         run: bash scripts/backup_restore_drill.sh
       - name: OpenAPI contract export is current (the SPA contract test reads it)
         run: python scripts/export_openapi.py | diff -u docs/api/openapi.json -
-      - name: Dependency vulnerability scan
+      - name: Dependency vulnerability scan (tested + production locks)
         working-directory: services/api
-        run: pip-audit -r requirements.in
+        run: |
+          pip-audit -r requirements.in
+          pip-audit -r requirements.runtime.lock.txt --no-deps --disable-pip
+      - name: Production lock pins only CI-tested versions
+        run: python scripts/check_runtime_lock.py
+      - name: SBOM (CycloneDX) for the production Python dependencies
+        working-directory: services/api
+        run: pip-audit -r requirements.runtime.lock.txt --no-deps --disable-pip -f cyclonedx-json -o sbom-python.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-python, path: services/api/sbom-python.cdx.json, retention-days: 30 }
       - name: Migrations apply from scratch and models match schema
         working-directory: services/api
         run: pytest -q tests/test_ratelimit_jobs_ai.py::test_models_match_migrations
@@ -68,6 +81,10 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high
+      - name: SBOM (CycloneDX) for shipped frontend dependencies
+        run: npm sbom --sbom-format cyclonedx --omit dev > sbom-web.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-web, path: apps/web/sbom-web.cdx.json, retention-days: 30 }
 
   e2e:
     runs-on: ubuntu-latest
@@ -129,4 +146,4 @@ jobs:
       - name: Scan for committed secrets
         run: |
           pip install detect-secrets
-          git ls-files | grep -vE 'package-lock|requirements.lock|openapi.json|secrets.baseline|\.png$' | xargs detect-secrets-hook --baseline .secrets.baseline
+          git ls-files | grep -vE 'package-lock|requirements.*lock|openapi.json|secrets.baseline|\.png$' | xargs detect-secrets-hook --baseline .secrets.baseline

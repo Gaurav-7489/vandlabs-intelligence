@@ -45,6 +45,8 @@ def migrated() -> None:
 def owner_sql():
     eng = create_engine(os.environ["VAND_MIGRATION_DATABASE_URL"])
     with eng.begin() as c:
+        # users has FORCE RLS (migration 0004); test setup inserts users directly, so it acts as the identity step.
+        c.execute(text("SELECT set_config('app.identity_resolution', 'on', false)"))
         yield c
 
 

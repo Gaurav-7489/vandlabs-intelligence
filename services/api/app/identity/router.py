@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.audit import service as audit
 from app.core.errors import Conflict, Forbidden, NotFound
@@ -94,11 +94,16 @@ async def invite_member(body: InviteIn, p: Annotated[Principal, Depends(require(
     _check_role(body.role)
     await _assert_can_grant(p, body.role)
     email = body.email.lower()
-    user = (await p.session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is None:
-        user = User(email=email)
-        p.session.add(user)
-        await p.session.flush()
+    # Identity resolution (scoped to these statements): the invitee may not be visible to this tenant yet.
+    await p.session.execute(text("SELECT set_config('app.identity_resolution', 'on', true)"))
+    try:
+        user = (await p.session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if user is None:
+            user = User(email=email)
+            p.session.add(user)
+            await p.session.flush()
+    finally:
+        await p.session.execute(text("SELECT set_config('app.identity_resolution', 'off', true)"))
     if (await p.session.execute(select(Membership).where(Membership.user_id == user.id))).scalar_one_or_none():
         raise Conflict("User is already a member")
     m = Membership(org_id=p.org_id, user_id=user.id, role=body.role, department=body.department)

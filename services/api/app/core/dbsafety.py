@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TENANT_TABLES = ("memberships", "documents", "document_chunks", "commitments", "tasks", "insights", "decisions", "approvals",
-                 "executions", "outcomes", "ai_usage", "jobs", "audit_events", "organizations")
+                 "executions", "outcomes", "ai_usage", "jobs", "audit_events", "organizations", "users", "insight_explanations")
 
 
 @dataclass

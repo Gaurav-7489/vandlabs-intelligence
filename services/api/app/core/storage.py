@@ -77,7 +77,9 @@ class S3Storage:
         self.bucket = s.s3_bucket
         self.client = client or boto3.client(
             "s3", endpoint_url=s.s3_endpoint_url or None, aws_access_key_id=s.s3_access_key_id, aws_secret_access_key=s.s3_secret_access_key,
-            region_name="auto", config=Config(retries={"max_attempts": 3, "mode": "standard"}, connect_timeout=5, read_timeout=30))
+            region_name="auto", config=Config(retries={"max_attempts": 3, "mode": "standard"}, connect_timeout=5, read_timeout=30,
+                          # boto3>=1.36 sends CRC32 checksums by default; R2 has rejected these on some operations.
+                          request_checksum_calculation="when_required", response_checksum_validation="when_required"))
 
     async def put(self, key: str, data: bytes) -> None:
         try:
