@@ -59,7 +59,7 @@ jobs:
       - name: SBOM (CycloneDX) for the production Python dependencies
         working-directory: services/api
         run: pip-audit -r requirements.runtime.lock.txt --no-deps --disable-pip -f cyclonedx-json -o sbom-python.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sbom-python, path: services/api/sbom-python.cdx.json, retention-days: 30 }
       - name: Migrations apply from scratch and models match schema
         working-directory: services/api
@@ -80,7 +80,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - name: SBOM (CycloneDX) for shipped frontend dependencies
         run: npm sbom --sbom-format cyclonedx --omit dev > sbom-web.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sbom-web, path: apps/web/sbom-web.cdx.json, retention-days: 30 }
 
   e2e:
