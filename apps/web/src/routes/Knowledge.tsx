@@ -6,6 +6,10 @@ import { fmtBytes, fmtDateTime, humanize } from "../lib/format";
 import { useCursorList } from "../lib/useCursorList";
 import { useOrgKey, useSession } from "../lib/session";
 
+/** Must not exceed the API's VAND_MAX_UPLOAD_BYTES nor the hosting gateway's body limit (Vercel Functions: 4.5 MB). */
+declare const __VAND_MAX_UPLOAD_MB__: number | undefined;
+const MAX_UPLOAD_MB = typeof __VAND_MAX_UPLOAD_MB__ === "number" && __VAND_MAX_UPLOAD_MB__ > 0 ? __VAND_MAX_UPLOAD_MB__ : 25;
+
 function Uploader() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -18,15 +22,19 @@ function Uploader() {
     onError: (e) => toast("error", errorText(e)),
   });
   if (!can("documents.write")) return null;
-  const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); Array.from(e.dataTransfer.files).forEach((f) => m.mutate(f)); };
+  const upload = (f: File) => {
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { toast("error", `“${f.name}” is larger than ${MAX_UPLOAD_MB} MB and was not uploaded.`); return; }
+    m.mutate(f);
+  };
+  const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); Array.from(e.dataTransfer.files).forEach(upload); };
   return (
     <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}
       className={`card flex flex-col items-center gap-2 border-dashed p-6 text-center transition-colors ${drag ? "border-accent bg-accentsoft" : ""}`}>
       <p className="text-sm">Drop files here, or</p>
       <button className="btn btn-primary" disabled={m.isPending} onClick={() => input.current?.click()}>{m.isPending ? "Uploading…" : "Choose files"}</button>
       <input ref={input} type="file" hidden multiple accept=".pdf,.docx,.csv,.xlsx,.txt" aria-label="Upload documents"
-        onChange={(e) => { Array.from(e.target.files ?? []).forEach((f) => m.mutate(f)); e.target.value = ""; }} />
-      <p className="text-xs text-ink2">PDF, DOCX, CSV, XLSX, TXT · up to 25 MB · Scanned PDFs need OCR, which is not configured.</p>
+        onChange={(e) => { Array.from(e.target.files ?? []).forEach(upload); e.target.value = ""; }} />
+      <p className="text-xs text-ink2">PDF, DOCX, CSV, XLSX, TXT · up to {MAX_UPLOAD_MB} MB · Scanned PDFs need OCR, which is not configured.</p>
     </div>
   );
 }

@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     clamd_port: int = 3310
     scan_required: bool = False  # True => files stay unindexed until a scan has actually passed (forced on in staging/production)
     max_queued_jobs_per_org: int = 500
+    # Scanner holds (file waits unindexed while the scanner is down/suspended). Holds do not consume normal retry attempts.
+    scan_hold_retry_seconds: int = 1800   # fallback retry while held (long: each retry wakes a scale-to-zero Postgres)
+    scan_hold_max_seconds: int = 7 * 24 * 3600  # give up (dead-letter, file stays unindexed) after this long
+    scan_probe_seconds: int = 60          # while holds exist, the idle worker PINGs clamd (no DB) and releases holds on PONG
     # Idle worker touches Postgres at most this often (stale-lock sweep). Larger => serverless DB can scale to zero.
     worker_idle_sweep_seconds: int = 600
 

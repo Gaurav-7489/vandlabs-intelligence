@@ -3,6 +3,7 @@
 Run: python -m app.worker
 """
 import asyncio
+import contextlib
 import os
 import signal
 import socket
@@ -41,6 +42,7 @@ class Worker:
         # the server-side BLPOP was still pending, the next wake signal would be delivered to the abandoned request and lost.
         self.redis_block = aioredis.from_url(self.s.redis_url, decode_responses=True, socket_timeout=None, socket_connect_timeout=2.0)
         self._stop = asyncio.Event()
+        self._holds_pending = False
 
     async def publish_stats(self) -> None:
         """Queue depth/age by status, from the worker role (the only role with cross-tenant visibility on `jobs`)."""
@@ -74,7 +76,8 @@ class Worker:
             async with self.db.tenant_session(org_id) as session:  # persist the visible hold state (handler tx was rolled back)
                 await session.execute(update(Document).where(Document.id == h.document_id).values(**h.fields))
             async with self.db.bare_session() as s:
-                status = await queue.fail(s, job_id, "held: security scan unavailable")
+                status = await queue.hold(s, job_id, "security scan unavailable", self.s.scan_hold_retry_seconds, self.s.scan_hold_max_seconds)
+            self._holds_pending = status == "retry_scheduled" or self._holds_pending
             log.warning("job_held", extra={"job_id": str(job_id), "status": status})
             await metrics.incr(self.redis, "scan.unavailable")
         except Exception as e:  # noqa: BLE001 - never crash the loop on a job error
@@ -104,20 +107,51 @@ class Worker:
             v = (await s.execute(text("SELECT extract(epoch FROM min(run_at) - now()) FROM jobs WHERE status IN ('queued','retry_scheduled')"))).scalar_one()
         return max(0.0, float(v)) if v is not None else float("inf")
 
+    async def release_holds_if_scanner_back(self) -> bool:
+        """While uploads are held for a missing scanner, PING clamd (no DB). On PONG, release the holds (one DB write)."""
+        if not self._holds_pending or not await self.scanner.ping():
+            return False
+        async with self.db.bare_session() as s:
+            n = await queue.release_holds(s)
+        self._holds_pending = False
+        log.info("scan_holds_released", extra={"jobs": n})
+        return n > 0
+
     async def wait_for_work(self, max_wait: float) -> bool:
-        """Block on the Redis wake list (no DB polling). Heartbeat every 30 s. Returns True if woken by a signal."""
+        """Block on the Redis wake list (no DB polling). Heartbeat every 30 s. Returns True if woken by a signal
+        or because scanner-held jobs were released."""
         deadline = time.monotonic() + max_wait
         while not self._stop.is_set() and time.monotonic() < deadline:
             await self.heartbeat()
-            slice_s = max(1, int(min(30.0, deadline - time.monotonic())))
+            if await self.release_holds_if_scanner_back():
+                return True
+            cap = float(self.s.scan_probe_seconds) if self._holds_pending else 30.0
+            slice_s = max(1, int(min(30.0, cap, deadline - time.monotonic())))
             try:
-                if await self.redis_block.blpop([WAKE_KEY], timeout=slice_s):
+                if await self._blpop_or_stop(slice_s):
                     return True
             except Exception as exc:  # noqa: BLE001
                 # Redis unavailable: degrade to checking Postgres directly (keeps jobs moving; may keep a serverless DB awake).
                 log.warning("wake_wait_failed", extra={"err": type(exc).__name__})
                 await asyncio.sleep(min(5.0, slice_s))
                 return True
+        return False
+
+    async def _blpop_or_stop(self, timeout_s: int) -> bool:
+        """BLPOP that a shutdown signal interrupts at once (otherwise SIGTERM waits up to 30 s and platforms SIGKILL us).
+        The blocking connection is only abandoned on shutdown, so a wake signal can never be swallowed while running;
+        a signal popped during shutdown is harmless because jobs are durable in Postgres and the next worker drains them."""
+        pop = asyncio.ensure_future(self.redis_block.blpop([WAKE_KEY], timeout=timeout_s))
+        stop = asyncio.ensure_future(self._stop.wait())
+        try:
+            done, _ = await asyncio.wait({pop, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+        if pop in done:
+            return bool(pop.result())
+        pop.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await pop
         return False
 
     async def drain(self, grace_s: float = 5.0) -> int:
@@ -142,6 +176,8 @@ class Worker:
                 safety = await check_role_safety(probe)
             if not safety.ok:
                 raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
+        async with self.db.bare_session() as s:  # holds from before a restart are still released when the scanner returns
+            self._holds_pending = await queue.count_holds(s) > 0
         log.info("worker_started", extra={"worker": self.id, "idle_sweep_s": self.s.worker_idle_sweep_seconds})
         while not self._stop.is_set():
             # DB touched only here: on a wake signal, a due retry, or the periodic safety sweep (stale locks).

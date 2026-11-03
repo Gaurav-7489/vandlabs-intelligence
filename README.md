@@ -3,7 +3,7 @@
 Enterprise organizational-intelligence platform: it sits above a company's existing systems and turns scattered records into
 **evidence → insight → decision → approved action → verified outcome**.
 
-> **Status: Phase 1.5 — real OIDC auth, hardened ingestion, edge/infra configuration prepared. Verified locally; NOT deployed, NOT production-ready.**
+> **Status: Phase 1.7 — SPA live on Vercel (API gateway prepared), backend NOT hosted, staging NOT provisioned, NOT production-ready.** Current state and next steps: [docs/HANDOFF.md](docs/HANDOFF.md).
 > See [docs/product/status.md](docs/product/status.md) for exactly what is implemented, tested, partial, or blocked.
 
 ## What works today (verified by tests in this repo)
@@ -25,7 +25,7 @@ scripts/seed_demo.py Seeds two SYNTHETIC demo organizations via the API
 
 ## Local setup
 
-Prereqs: Python 3.12+, Node 22+, PostgreSQL 16, Redis 7.
+Prereqs: Python 3.12+, Node 22+, PostgreSQL 17, Redis 7.
 
 ```bash
 # 1. Database roles + databases (once, as a Postgres superuser; local-dev passwords only)
@@ -52,7 +52,7 @@ The local sign-in form exists only when `VAND_AUTH_MODE=dev`; the API refuses th
 ## Tests
 
 ```bash
-cd services/api && pytest -q                 # 112 tests, real Postgres + Redis, migrations applied from scratch
+cd services/api && pytest -q                 # 151 tests, real Postgres + Redis, migrations applied from scratch
 cd services/api && ruff check . && mypy app
 cd apps/web && npm run typecheck && npm run lint && npm test && npm run build
 node tests/e2e/workflow.mjs                  # needs API + worker + web running and seeded demo data

@@ -1,23 +1,57 @@
-# Deployment (configuration prepared; NOTHING is deployed or externally verified)
+# Deployment — staging (prepared; NOT deployed or externally verified)
 
-Targets: Cloudflare Worker + static assets (`apps/web/wrangler.jsonc`, `worker/index.ts`), Render blueprint (`render.yaml`: API, worker, Key Value, private ClamAV), Neon Postgres, Cloudflare R2, Auth0 ([setup](auth0-setup.md)). Creating these resources **creates billable services and requires account owner authorization**.
+Topology ([ADR 0007](../decisions/0007-vercel-same-origin-api-gateway.md)): browser → existing Vercel project
+`vandlabs-intelligence` (SPA + `/api/v1/*` gateway function) → Render API (`render.yaml`) + Render worker → Neon
+(`shy-leaf-28061787`, database `vand_staging`), Render Key Value, R2, private ClamAV; Auth0 for sign-in.
+The Vercel environment is called "Production" by Vercel, but everything here is **staging** with synthetic data only.
+Paid steps (Render API/worker A4, ClamAV A6) need the owner's approval first.
 
 ## Order of operations
-1. **Neon:** create staging project/database. As owner run `infra/database/roles.sql` equivalent with strong secret-managed passwords (plain roles via SQL, see ADR-0006). Record direct (migration) and pooled (runtime) URLs.
-2. **R2:** private bucket + scoped token. **Auth0:** per auth0-setup.md. **Render:** apply blueprint, fill every `sync: false` variable.
-3. First deploy runs `alembic upgrade head` (preDeploy, owner URL). Create the first platform admin once: `python -m app.cli create-platform-admin <email>` (run as a Render job/shell with the migration URL).
-4. API refuses to start if: dev auth, dev DB hosts/credentials, local storage, missing OIDC/session/origin secrets, scanner not required, or an unsafe DB role. `/readyz` reports `database`, `redis`, `db_role`.
-5. `wrangler secret put ORIGIN_AUTH_SECRET` (same value as `VAND_ORIGIN_AUTH_SECRET`), set `API_ORIGIN`, `wrangler deploy`.
-6. Smoke test: `GET /api/v1/auth/config` → `{"mode":"oidc"}`, login, upload a CSV, see the insight, run the decision workflow, check `/readyz` from Render.
+1. **Neon (branch first).** Create a throwaway branch (e.g. `bootstrap-check`) of the default branch. On it, run
+   `infra/database/neon_bootstrap.sql` (generated passwords via psql variables; see the file header), then migrations
+   as `vand_owner` against `vand_staging`, then `scripts/verify_staging_db.sql` — every row must be `ok = t`.
+   Delete the branch, then repeat on the default branch with **new** passwords stored in the secret manager.
+   If `CREATE ROLE vand_backup ... BYPASSRLS` fails ("Only roles with the BYPASSRLS attribute may create…"), stop:
+   backups need another design; do not weaken RLS.
+2. **R2:** private buckets + scoped tokens (checklist step 3). **Auth0:** per [auth0-setup.md](auth0-setup.md).
+3. **Render (after A4/A6 approval):** New Blueprint from the repo → `render.yaml`. Fill every `sync: false` variable from
+   the secret manager: pooled Neon URLs for `vand_app`/`vand_worker` (`VAND_DB_DISABLE_STATEMENT_CACHE=true` is set),
+   R2 doc-bucket token, OIDC values, `VAND_SESSION_ENCRYPTION_KEY` (Fernet), `VAND_ORIGIN_AUTH_SECRET` (≥ 32 random chars).
+   **No owner/migration URL in Render** — the API refuses to start if one is present, or if its DB role is unsafe.
+4. **Migrations:** GitHub → Actions → *Deploy staging (manual)* → `migrate` job (environment `staging`, reviewer approval,
+   secret `STAGING_OWNER_DATABASE_URL` = Neon direct endpoint as `vand_owner`). Then once, from a trusted machine:
+   `OWNER_DATABASE_URL=<direct owner URL> python -m app.cli create-platform-admin <owner email>`.
+5. **Vercel:** Production-scope env vars `VAND_API_ORIGIN=https://<render api host>` and `VAND_ORIGIN_AUTH_SECRET`
+   (same value as Render). Not for Preview. Redeploy `main` after the PR is merged (owner decision).
+6. **Smoke + boundary checks:** `tests/staging/live_checks.sh` (direct origin 403, gateway 200, 413, traversal 404,
+   preview 503 with `PREVIEW_URL`, `/readyz` incl. `db_role` with `ORIGIN_AUTH_SECRET` in env). Then, with A9 approval,
+   `tests/staging/acceptance.mjs` and `tests/staging/scanner_checks.mjs OUTAGE=1`.
 
-## Cloudflare edge (dashboard, not yet done)
-Managed WAF ruleset; rate-limiting rules for `/api/v1/auth/login|callback` and `/api/v1/documents`; Bot Fight Mode / Turnstile only on the login entry; TLS Full (strict); always HTTPS; no caching rules for `/api/*` (the Worker also forces `Cache-Control: no-store`).
+## Scanner operating schedule (A6)
+`vand-clamav-staging` stays **suspended** outside test windows (Render dashboard → service → Settings → Suspend /
+Resume, or the Render API). While suspended, uploads are accepted, kept **unindexed** with `scan_pending`, and never
+marked clean. The worker retries held jobs every 30 min (`VAND_SCAN_HOLD_RETRY_SECONDS`) without spending normal retry
+attempts, and PINGs clamd every 60 s without touching Postgres; when ClamAV answers again it releases all held uploads
+automatically. Holds older than 7 days dead-letter (file stays unindexed; re-upload or *Reprocess*). ClamAV needs
+~1–2 min after resume to load signatures before it answers.
 
 ## Rollback
-Render: redeploy previous deploy; Worker: `wrangler rollback`. Migrations are forward-compatible (expand/contract). `0001` downgrade is blocked without `VAND_ALLOW_DESTRUCTIVE_DOWNGRADE`; `0002` downgrade drops `insight_explanations` and scan columns.
+- **Frontend/gateway:** Vercel → Deployments → *Instant Rollback* to the previous production deployment. To cut the
+  SPA off from the API immediately, remove `VAND_API_ORIGIN` (gateway then fails closed with 503) and redeploy.
+- **API / worker:** Render → service → Events → *Rollback* to the previous deploy (same image for both; roll back both).
+- **Configuration:** Render keeps env var history only in the dashboard audit; record changes in the PR/issue.
+- **Schema:** migrations are additive (expand/contract). **Do not assume downgrades are safe**: `0001` downgrade is
+  blocked without `VAND_ALLOW_DESTRUCTIVE_DOWNGRADE`; `0002` downgrade drops `insight_explanations` and scan columns.
+  Preferred schema rollback = restore the latest encrypted backup into a **new Neon branch**, verify with the drill
+  checks + `scripts/verify_staging_db.sql`, then repoint the pooled URLs. Neon Free history (~6 h) also allows a
+  branch from a point in time.
+- **Secrets:** rotate `VAND_ORIGIN_AUTH_SECRET` by setting the new value on Render and Vercel together, then redeploy both.
+
+## Edge protection (not yet done)
+On `*.vercel.app`: Vercel Firewall rules where the plan allows; the API's Redis-backed rate limits always apply.
+Full Cloudflare WAF needs a custom domain (not approved).
 
 ## Backups / DR
-**Not configured.** Enable Neon PITR + branch restore drill; R2 object versioning; define RPO/RTO before commitments. Redis holds sessions and rate counters only (loss = users re-login).
-
-## Operations
-Metrics/tracing/alerting are **not implemented** (JSON logs with request ids only; `GET /readyz`; `/usage/ai`; queue state in `jobs`). Parser isolation uses `unshare -rn` when the kernel allows it (reported by tests; GitHub runners and some hosts disable unprivileged user namespaces → falls back to rlimits + in-process socket block).
+`.github/workflows/backup-staging.yml` (prepared, not run): `pg_dump` as `vand_backup` with a PG 17 client → GPG
+AES-256 → private R2 backup bucket (write-only token). Restores need a separate, temporary read token. RPO/RTO not
+yet defined. Redis holds sessions and rate counters only (loss = users sign in again).

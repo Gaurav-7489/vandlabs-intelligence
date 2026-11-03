@@ -90,3 +90,16 @@ async def test_next_due_reflects_scheduled_retries(make_env, worker, worker_sql)
     worker_sql.connection.commit()
     due = await worker.next_due_seconds()
     assert 3 <= due <= 8  # the worker sleeps until the retry is due, not for the whole idle sweep
+
+
+async def test_shutdown_signal_interrupts_idle_wait(worker, monkeypatch):
+    """SIGTERM must not wait out a 30 s BLPOP slice (Render/most platforms SIGKILL after ~30 s)."""
+    await drain(worker)
+    w = Worker(db=Database(make_engine(get_settings().worker_database_url)))
+    monkeypatch.setattr(w.s, "worker_idle_sweep_seconds", 3600)
+    task = asyncio.create_task(w.run_forever())
+    await asyncio.sleep(2.0)  # now blocked in BLPOP
+    t0 = time.monotonic()
+    w._stop.set()
+    await asyncio.wait_for(task, 5)
+    assert time.monotonic() - t0 < 3

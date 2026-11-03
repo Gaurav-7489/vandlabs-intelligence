@@ -1,13 +1,15 @@
 # Render Blueprint (STAGING). NOT applied: provisioning needs a Render account and creates billable services.
 # Field names follow https://render.com/docs/blueprint-spec . Secrets are `sync: false` (entered in the dashboard; never in Git).
 # Owner/migration credentials are deliberately ABSENT: migrations run in .github/workflows/deploy-staging.yml.
+# Phase 1.7: the browser origin is the existing Vercel project; /api/v1/* reaches this API through the Vercel
+# gateway function (apps/web/api/gateway.ts), which adds X-Origin-Auth server-side. Direct calls without it get 403.
 envVarGroups:
   - name: vand-staging-shared
     envVars:
       - { key: VAND_ENV, value: staging }
       - { key: VAND_AUTH_MODE, value: oidc }
-      - { key: VAND_PUBLIC_BASE_URL, sync: false }          # https://<staging web origin> (the Worker URL)
-      - { key: VAND_CORS_ORIGINS, sync: false }             # same https origin
+      - { key: VAND_PUBLIC_BASE_URL, value: "https://vandlabs-intelligence.vercel.app" }  # browser origin (Vercel); OIDC callback = <this>/api/v1/auth/callback
+      - { key: VAND_CORS_ORIGINS, value: "https://vandlabs-intelligence.vercel.app" }     # same origin; also the CSRF Origin allow-list
       - { key: VAND_OIDC_ISSUER, sync: false }              # https://<tenant>.<region>.auth0.com/
       - { key: VAND_OIDC_AUDIENCE, sync: false }
       - { key: VAND_OIDC_JWKS_URL, sync: false }
@@ -15,7 +17,8 @@ envVarGroups:
       - { key: VAND_OIDC_CLIENT_SECRET, sync: false }
       - { key: VAND_OIDC_EXTRA_AUTHORIZE_PARAMS, sync: false } # audience=<API identifier>
       - { key: VAND_SESSION_ENCRYPTION_KEY, sync: false }
-      - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }
+      - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }       # same value as VAND_ORIGIN_AUTH_SECRET in Vercel (Production scope only)
+      - { key: VAND_MAX_UPLOAD_BYTES, value: "4194304" }    # Vercel Functions cap request bodies at 4.5 MB; the SPA enforces 4 MB too
       - { key: VAND_DATABASE_URL, sync: false }             # Neon POOLED endpoint, role vand_app (sslmode=require is translated for asyncpg)
       - { key: VAND_WORKER_DATABASE_URL, sync: false }      # Neon POOLED endpoint, role vand_worker
       - { key: VAND_DB_DISABLE_STATEMENT_CACHE, value: "true" }  # required behind Neon's transaction-mode pooler
@@ -29,6 +32,9 @@ envVarGroups:
       - { key: VAND_CLAMD_PORT, value: "3310" }
       - { key: VAND_ANTHROPIC_API_KEY, sync: false }        # optional; leave empty to keep AI disabled
       - { key: VAND_WORKER_IDLE_SWEEP_SECONDS, value: "1800" }  # idle worker waits on Redis; lets Neon Free scale to zero
+      - { key: VAND_PARSER_MEMORY_MB, value: "256" }        # Starter = 512 MB total: sandbox limit must trip before the container OOMs (4 MB CSV/XLSX peak ~255 MB RSS, measured)
+      - { key: VAND_SCAN_HOLD_RETRY_SECONDS, value: "1800" }  # uploads held while ClamAV is suspended: fallback retry (each retry wakes Neon)
+      - { key: VAND_SCAN_PROBE_SECONDS, value: "60" }       # while holds exist the worker PINGs clamd (no DB) and releases them when it answers
 
 services:
   - type: web
@@ -66,7 +72,7 @@ services:
     name: vand-clamav-staging
     runtime: image
     image: { url: docker.io/clamav/clamav:stable }
-    plan: pro                  # ClamAV docs: ~4 GB RAM (>=1.2 GiB signatures, ~2x during reload). Suspend when idle (billed per second).
+    plan: pro                  # 4 GB. ClamAV Docker docs: minimum 3 GiB, configure 4 GiB (signature reload temporarily doubles RAM). Keep SUSPENDED outside test windows.
     region: singapore
 
   - type: keyvalue

@@ -16,8 +16,13 @@ class ScanResult:
 class Scanner(Protocol):
     async def scan(self, data: bytes) -> ScanResult: ...
 
+    async def ping(self) -> bool: ...
+
 
 class NoScanner:
+    async def ping(self) -> bool:
+        return False
+
     async def scan(self, data: bytes) -> ScanResult:
         return ScanResult("unavailable", "no scanner configured")
 
@@ -33,6 +38,19 @@ class ClamdScanner:
             return await asyncio.wait_for(self._scan(data), self.timeout)
         except Exception as e:  # noqa: BLE001
             return ScanResult("unavailable", f"scanner error: {type(e).__name__}")
+
+    async def ping(self) -> bool:
+        """clamd PING/PONG liveness probe (cheap; no file data). Any error => False."""
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port), 5)
+            try:
+                writer.write(b"zPING\0")
+                await writer.drain()
+                return (await asyncio.wait_for(reader.readuntil(b"\0"), 5)).rstrip(b"\0") == b"PONG"
+            finally:
+                writer.close()
+        except Exception:  # noqa: BLE001
+            return False
 
     async def _scan(self, data: bytes) -> ScanResult:
         reader, writer = await asyncio.open_connection(self.host, self.port)

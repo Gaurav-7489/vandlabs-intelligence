@@ -1,5 +1,5 @@
 // Staging acceptance test: the full 17-step journey in a real browser against a deployed environment.
-//   BASE_URL            e.g. https://vandlabs-intelligence-web-staging.<acct>.workers.dev
+//   BASE_URL            e.g. https://vandlabs-intelligence.vercel.app (or http://localhost:5180 for run_local_rehearsal.sh)
 //   IDP                 "auth0" (real staging) | "test-issuer" (local rehearsal only - does NOT count as live verification)
 //   REQUESTER_EMAIL/PASSWORD, APPROVER_EMAIL/PASSWORD, AUDITOR_EMAIL/PASSWORD   (org A; synthetic users)
 //   OUTSIDER_EMAIL/PASSWORD                                                   (member of org B only)

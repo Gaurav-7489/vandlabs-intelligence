@@ -39,6 +39,25 @@ async def test_privileged_roles_are_flagged_unsafe(admin_sql, attr, expected):
         admin_sql("DROP ROLE vand_rogue")
 
 
+@pytest.mark.parametrize("privileged", ["BYPASSRLS", "SUPERUSER", "NOLOGIN"])
+async def test_membership_in_privileged_role_is_flagged_unsafe(admin_sql, privileged):
+    """Neon console roles are members of neon_superuser: membership (SET ROLE path) must be detected, not just attributes."""
+    admin_sql("DROP ROLE IF EXISTS vand_member")
+    admin_sql("DROP ROLE IF EXISTS neon_superuser" if privileged == "NOLOGIN" else "DROP ROLE IF EXISTS vand_priv")
+    priv = "neon_superuser" if privileged == "NOLOGIN" else "vand_priv"
+    admin_sql(f"CREATE ROLE {priv} NOLOGIN {'' if privileged == 'NOLOGIN' else privileged}")
+    admin_sql("CREATE ROLE vand_member LOGIN PASSWORD 'x' NOSUPERUSER NOBYPASSRLS")  # pragma: allowlist secret (test role)
+    admin_sql(f"GRANT {priv} TO vand_member")
+    admin_sql("GRANT USAGE ON SCHEMA public TO vand_member")
+    try:
+        r = await _check("postgresql+asyncpg://vand_member:x@localhost:5432/vand_test")  # pragma: allowlist secret (test role)
+        assert not r.ok and any(f"member of privileged role(s): {priv}" in p for p in r.problems), r.problems
+    finally:
+        admin_sql("REVOKE ALL ON SCHEMA public FROM vand_member")
+        admin_sql("DROP ROLE vand_member")
+        admin_sql(f"DROP ROLE {priv}")
+
+
 async def test_rls_actually_blocks_a_normal_role_but_not_a_bypassrls_role(admin_sql, make_env, client):
     """The invariant itself, not just the detector: tenant rows are invisible to the app role and visible to a BYPASSRLS role."""
     env = await make_env("bypass")
