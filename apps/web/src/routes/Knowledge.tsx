@@ -31,6 +31,28 @@ function Uploader() {
   );
 }
 
+function DocActions({ d }: { d: Doc }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { can } = useSession();
+  const [confirming, setConfirming] = useState(false);
+  const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === "documents" || q.queryKey[1] === "insights" });
+  const reprocess = useMutation({ mutationFn: () => api<Doc>(`/documents/${d.id}/reprocess`, { method: "POST" }),
+    onSuccess: () => { toast("ok", `“${d.filename}” queued for reprocessing.`); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
+  const remove = useMutation({ mutationFn: () => api(`/documents/${d.id}`, { method: "DELETE" }),
+    onSuccess: () => { toast("ok", `“${d.filename}” deleted with its derived records.`); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
+  const busy = d.status === "queued" || d.status === "processing";
+  return (
+    <div className="flex justify-end gap-2">
+      {can("documents.write") && <button className="btn" disabled={busy || reprocess.isPending} onClick={() => reprocess.mutate()}>Reprocess</button>}
+      {can("documents.delete") && (confirming
+        ? <><button className="btn btn-danger" disabled={remove.isPending} onClick={() => remove.mutate()} autoFocus>Confirm delete</button>
+            <button className="btn" onClick={() => setConfirming(false)}>Cancel</button></>
+        : <button className="btn btn-danger" onClick={() => setConfirming(true)} aria-label={`Delete ${d.filename}`}>Delete</button>)}
+    </div>
+  );
+}
+
 function Documents() {
   const list = useCursorList<Doc>("documents", "/documents", {}, { pollWhile: (docs) => docs.some((d) => d.status === "queued" || d.status === "processing") });
   return (
@@ -39,7 +61,7 @@ function Documents() {
         list.items.length === 0 ? <Empty title="No documents yet" hint="Upload a commitments or project-status spreadsheet to see the first insights." /> : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead><tr><th className="th">File</th><th className="th">Status</th><th className="th hidden sm:table-cell">Extracted</th><th className="th hidden md:table-cell">Uploaded</th></tr></thead>
+              <thead><tr><th className="th">File</th><th className="th">Status</th><th className="th hidden sm:table-cell">Extracted</th><th className="th hidden md:table-cell">Uploaded</th><th className="th"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody className="divide-y divide-line">
                 {list.items.map((d) => (
                   <tr key={d.id} className="enter">
@@ -47,6 +69,7 @@ function Documents() {
                     <td className="td"><Badge tone={stateTone(d.status)}>{humanize(d.status)}</Badge>{" "}<Badge tone={d.scan_status === "clean" ? "ok" : d.scan_status === "infected" ? "high" : undefined}>{(d.scan_status ?? "pending") === "not_performed" ? "Not scanned" : `Scan: ${humanize(d.scan_status ?? "pending")}`}</Badge>{d.error && <p className="mt-1 max-w-xs text-xs text-ink2">{d.error}</p>}</td>
                     <td className="td hidden text-xs text-ink2 sm:table-cell">{typeof d.stats.commitments === "number" ? `${d.stats.commitments} commitments · ${d.stats.tasks} tasks` : "—"}</td>
                     <td className="td hidden text-xs text-ink2 md:table-cell">{fmtDateTime(d.created_at)}</td>
+                    <td className="td"><DocActions d={d} /></td>
                   </tr>))}
               </tbody>
             </table>

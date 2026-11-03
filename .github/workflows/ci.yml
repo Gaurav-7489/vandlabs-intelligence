@@ -39,16 +39,13 @@ jobs:
         env:
           VAND_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vand_test   # pragma: allowlist secret  (throwaway CI container superuser)
         run: pytest -q -rs
-      - name: Postgres client matching the server major (17) for dump/restore
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - name: Backup/restore drill (dump as read-only BYPASSRLS role, restore, verify counts + RLS + isolation)
         env:
           PGPASSWORD: postgres
           BACKUP_URL: postgresql://vand_backup:dev_backup_pw@localhost:5432/vand_test  # pragma: allowlist secret  (CI-only)
           ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres  # pragma: allowlist secret  (CI-only)
           APP_PASSWORD: dev_app_pw  # pragma: allowlist secret  (CI-only)
+          PG_DOCKER_IMAGE: postgres:17   # client tools from the same image as the service => exact version match
         run: bash scripts/backup_restore_drill.sh
       - name: OpenAPI contract export is current (the SPA contract test reads it)
         run: python scripts/export_openapi.py | diff -u docs/api/openapi.json -
@@ -130,6 +127,8 @@ jobs:
           bash scripts/wait_for.sh http://localhost:5173/ 120
       - name: E2E - evidence to outcome workflow (dev auth)
         run: node tests/e2e/workflow.mjs
+      - name: E2E - management actions (direct task, reprocess, two-step delete, invite link, sign-out-everywhere)
+        run: node tests/e2e/ui_actions.mjs
       - name: E2E - real OIDC browser flow against test issuer
         run: |
           PGPASSWORD=dev_owner_pw psql -h localhost -U vand_owner -d vand_dev -f tests/e2e/seed_oidc.sql

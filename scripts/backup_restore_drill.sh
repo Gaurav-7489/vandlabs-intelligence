@@ -8,7 +8,15 @@
 set -euo pipefail
 : "${BACKUP_URL:?}" "${ADMIN_URL:?}" "${APP_PASSWORD:?}"
 SCRATCH="vand_restore_drill_$(date +%s)"
-DUMP="$(mktemp -d)/drill.pgc"
+DUMPDIR="$(mktemp -d)"; DUMP="$DUMPDIR/drill.pgc"
+# Optional: run the Postgres client tools from a container image whose version EXACTLY matches the server
+# (e.g. PG_DOCKER_IMAGE=postgres:17). Useful where the host only has a newer client (GitHub runners ship 18).
+if [ -n "${PG_DOCKER_IMAGE:-}" ]; then
+  for tool in psql pg_dump pg_restore; do
+    eval "$tool() { docker run --rm -i --network host -v \"$DUMPDIR:$DUMPDIR\" -e PGPASSWORD \"$PG_DOCKER_IMAGE\" $tool \"\$@\"; }"
+  done
+  echo "   using client tools from $PG_DOCKER_IMAGE"
+fi
 HOSTPART="$(echo "$ADMIN_URL" | sed -E 's#^postgresql://[^@]*@([^/]+)/.*#\1#')"
 restore_url() { echo "$ADMIN_URL" | sed -E "s#/[^/?]+(\?|$)#/$SCRATCH\1#"; }
 # Counting must use a BYPASSRLS reader on BOTH sides: under FORCE RLS even the owner sees zero tenant rows.

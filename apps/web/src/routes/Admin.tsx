@@ -16,7 +16,12 @@ function Members() {
   const [role, setRole] = useState("staff");
   const q = useQuery({ queryKey: [org, "members"], queryFn: ({ signal }) => api<{ items: Member[] }>("/members", { signal }) });
   const refresh = () => qc.invalidateQueries({ queryKey: [org, "members"] });
-  const invite = useMutation({ mutationFn: () => api("/members", { method: "POST", body: { email, role } }), onSuccess: () => { toast("ok", "Member added. They can sign in with this email."); setEmail(""); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const invite = useMutation({ mutationFn: () => api("/members", { method: "POST", body: { email, role } }),
+    onSuccess: () => { toast("ok", "Member added."); setInviteLink(`${window.location.origin}/?invite=1&email=${encodeURIComponent(email)}`); setEmail(""); void refresh(); },
+    onError: (e) => toast("error", errorText(e)) });
+  const revoke = useMutation({ mutationFn: (id: string) => api<{ revoked: number }>(`/members/${id}/revoke-sessions`, { method: "POST" }),
+    onSuccess: (r) => toast("ok", r.revoked ? `Signed out of ${r.revoked} active session(s).` : "No active sessions to end."), onError: (e) => toast("error", errorText(e)) });
   const change = useMutation({ mutationFn: ({ id, role }: { id: string; role: string }) => api(`/members/${id}`, { method: "PATCH", body: { role } }), onSuccess: () => { toast("ok", "Role updated."); void refresh(); }, onError: (e) => toast("error", errorText(e)) });
   const submit = (e: FormEvent) => { e.preventDefault(); invite.mutate(); };
   return (
@@ -27,12 +32,19 @@ function Members() {
           <div><label className="label" htmlFor="ir">Role</label><select id="ir" className="input" value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
           <button className="btn btn-primary" disabled={invite.isPending}>Add member</button>
         </form>)}
+      {inviteLink && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accentsoft p-4 text-sm" role="status">
+          <span className="text-accent">Share this sign-up link with the invitee (they must verify their email):</span>
+          <code className="min-w-0 flex-1 truncate rounded bg-surface px-2 py-1 text-xs">{inviteLink}</code>
+          <button className="btn" onClick={() => { void navigator.clipboard?.writeText(inviteLink).then(() => toast("ok", "Link copied.")); }}>Copy</button>
+        </div>)}
       {q.isPending ? <SkeletonRows /> : q.isError ? <ErrorPanel error={q.error} onRetry={() => void q.refetch()} /> : (
-        <div className="overflow-x-auto"><table className="w-full"><thead><tr><th className="th">Member</th><th className="th">Role</th><th className="th">Status</th></tr></thead>
+        <div className="overflow-x-auto"><table className="w-full"><thead><tr><th className="th">Member</th><th className="th">Role</th><th className="th">Status</th>{can("members.write") && <th className="th"><span className="sr-only">Actions</span></th>}</tr></thead>
           <tbody className="divide-y divide-line">{q.data.items.map((m) => (
             <tr key={m.id}><td className="td">{m.email}</td>
               <td className="td">{can("members.write") ? <select className="input w-32" aria-label={`Role for ${m.email}`} value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value })}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select> : m.role}</td>
-              <td className="td"><Badge tone={m.pending ? "medium" : "ok"}>{m.pending ? "Invited" : humanize(m.status)}</Badge></td></tr>))}</tbody></table></div>)}
+              <td className="td"><Badge tone={m.pending ? "medium" : "ok"}>{m.pending ? "Invited" : humanize(m.status)}</Badge></td>
+              {can("members.write") && <td className="td text-right">{!m.pending && <button className="btn" disabled={revoke.isPending} onClick={() => revoke.mutate(m.id)} aria-label={`Sign ${m.email} out everywhere`}>Sign out everywhere</button>}</td>}</tr>))}</tbody></table></div>)}
     </Card>
   );
 }
