@@ -133,8 +133,9 @@ async def explanation_history(iid: UUID, p: Annotated[Principal, Depends(require
 
 
 @router.post("/intelligence/analyze", status_code=202)
-async def trigger_analysis(p: Annotated[Principal, Depends(require(P.INSIGHTS_WRITE))]):
+async def trigger_analysis(p: Annotated[Principal, Depends(require(P.INSIGHTS_WRITE))], state: Annotated[AppState, Depends(get_state)]):
     job = await queue.enqueue(p.session, org_id=p.org_id, kind="analyze", payload={})
+    await queue.wake_worker(state.redis)
     await audit.record(p.session, action="analysis.requested", org_id=p.org_id, actor=p.user.id, ip=p.ip)
     return {"job_id": job.id, "status": job.status}
 

@@ -26,6 +26,7 @@ from app.jobs import queue
 from app.models import Document
 
 log = get_logger("worker")
+WAKE_KEY = "jobs:wake"
 
 
 class Worker:
@@ -90,7 +91,44 @@ class Worker:
             return await run_analysis(session, self.s, org_id)
         raise ValueError(f"unknown job kind {kind}")
 
-    async def run_forever(self, poll: float = 1.0) -> None:
+    async def heartbeat(self) -> None:
+        """Redis-only liveness signal (does NOT touch Postgres, so an idle Neon compute can scale to zero)."""
+        await self.redis.set(metrics.HEARTBEAT_KEY, str(time.time()), ex=600)
+
+    async def next_due_seconds(self) -> float:
+        """Seconds until the earliest scheduled job (retry backoff) - asked only while the DB is already awake."""
+        async with self.db.bare_session() as s:
+            v = (await s.execute(text("SELECT extract(epoch FROM min(run_at) - now()) FROM jobs WHERE status IN ('queued','retry_scheduled')"))).scalar_one()
+        return max(0.0, float(v)) if v is not None else float("inf")
+
+    async def wait_for_work(self, max_wait: float) -> bool:
+        """Block on the Redis wake list (no DB polling). Heartbeat every 30 s. Returns True if woken by a signal."""
+        deadline = time.monotonic() + max_wait
+        while not self._stop.is_set() and time.monotonic() < deadline:
+            await self.heartbeat()
+            slice_s = max(1, int(min(30.0, deadline - time.monotonic())))
+            try:
+                if await self.redis.blpop([WAKE_KEY], timeout=slice_s):
+                    return True
+            except Exception as exc:  # noqa: BLE001 - Redis hiccup: fall back to a short sleep, then the DB sweep
+                log.warning("wake_wait_failed", extra={"err": type(exc).__name__})
+                await asyncio.sleep(min(5.0, slice_s))
+        return False
+
+    async def drain(self, grace_s: float = 5.0) -> int:
+        """Run jobs until the queue is empty. After a wake signal the enqueuing transaction may not have committed yet,
+        so keep trying briefly before going idle."""
+        n, deadline = 0, time.monotonic() + grace_s
+        while not self._stop.is_set():
+            if await self.run_one():
+                n, deadline = n + 1, time.monotonic() + grace_s
+                continue
+            if n or time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(0.5)
+        return n
+
+    async def run_forever(self) -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
@@ -99,17 +137,14 @@ class Worker:
                 safety = await check_role_safety(probe)
             if not safety.ok:
                 raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
-        log.info("worker_started", extra={"worker": self.id})
-        last_pub = 0.0
+        log.info("worker_started", extra={"worker": self.id, "idle_sweep_s": self.s.worker_idle_sweep_seconds})
         while not self._stop.is_set():
-            if time.monotonic() - last_pub > 30:
-                await self.publish_stats()
-                last_pub = time.monotonic()
-            if not await self.run_one():
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=poll)
-                except TimeoutError:
-                    pass
+            # DB touched only here: on a wake signal, a due retry, or the periodic safety sweep (stale locks).
+            await self.drain(grace_s=0.0)
+            await self.publish_stats()
+            wait = min(self.s.worker_idle_sweep_seconds, await self.next_due_seconds())
+            if await self.wait_for_work(wait):
+                await self.drain()
         await self.db.dispose()
         await self.redis.aclose()
         log.info("worker_stopped")

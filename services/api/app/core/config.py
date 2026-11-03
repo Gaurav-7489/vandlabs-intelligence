@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     clamd_port: int = 3310
     scan_required: bool = False  # True => files stay unindexed until a scan has actually passed (forced on in staging/production)
     max_queued_jobs_per_org: int = 500
+    # Idle worker touches Postgres at most this often (stale-lock sweep). Larger => serverless DB can scale to zero.
+    worker_idle_sweep_seconds: int = 600
 
     # AI gateway: providers are configured, never assumed.
     anthropic_api_key: str = ""

@@ -1,4 +1,6 @@
 """Compatibility checks for hosted services that can be verified without provisioning them."""
+import os
+
 import pytest
 from sqlalchemy import text
 
@@ -44,3 +46,26 @@ def test_client_ip_header_only_trusted_from_edge():
     assert client_ip(R(), 1) == "10.0.0.9"  # type: ignore[arg-type]
     R.state = type("S", (), {"edge_trusted": True})()
     assert client_ip(R(), 1) == "198.51.100.7"  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("raw", ["postgresql://u:p@ep-x.neon.tech/db?sslmode=require&channel_binding=require",
+                                 "postgres://u:p@ep-x.neon.tech/db?sslmode=require"])
+def test_provider_urls_get_the_installed_drivers(raw):
+    from app.core.db import with_driver
+    url, args = normalize_asyncpg_url(raw)
+    assert url.startswith("postgresql+asyncpg://") and args == {"ssl": "require"}
+    assert with_driver(raw, "psycopg").startswith("postgresql+psycopg://")  # migrations/CLI (psycopg 3 understands sslmode)
+
+
+async def test_migrations_and_cli_accept_a_plain_postgresql_url(owner_sql):
+    """OWNER_DATABASE_URL exactly as a provider hands it out (no +driver)."""
+    import subprocess
+    import sys
+    plain = os.environ["VAND_MIGRATION_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
+    env = {**os.environ, "OWNER_DATABASE_URL": plain}
+    env.pop("VAND_MIGRATION_DATABASE_URL")
+    r = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=os.path.dirname(os.path.dirname(__file__)), env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and "0004" in r.stdout, r.stderr[-500:]
+    r = subprocess.run([sys.executable, "-m", "app.cli", "create-platform-admin", f"cli-{os.getpid()}@vand.example.com"],
+                       cwd=os.path.dirname(os.path.dirname(__file__)), env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-500:]

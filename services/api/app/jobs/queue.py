@@ -68,3 +68,16 @@ async def fail(session: AsyncSession, job_id: UUID, error: str) -> str:
           last_error = :e, locked_at = NULL, updated_at = now()
         WHERE id = :id RETURNING status"""), {"id": job_id, "e": error[:2000]})).scalar_one()
     return str(r)
+
+
+async def wake_worker(redis: Any) -> None:
+    """Tell an idle worker there is work (it blocks on Redis instead of polling Postgres). Best effort: the worker's
+    periodic sweep still finds the job if this signal is lost."""
+    try:
+        pipe = redis.pipeline()
+        pipe.rpush("jobs:wake", "1")
+        pipe.ltrim("jobs:wake", -10, -1)
+        pipe.expire("jobs:wake", 3600)
+        await pipe.execute()
+    except Exception:  # noqa: BLE001
+        return

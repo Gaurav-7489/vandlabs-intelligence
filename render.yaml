@@ -28,6 +28,7 @@ envVarGroups:
       - { key: VAND_SCAN_REQUIRED, value: "true" }
       - { key: VAND_CLAMD_PORT, value: "3310" }
       - { key: VAND_ANTHROPIC_API_KEY, sync: false }        # optional; leave empty to keep AI disabled
+      - { key: VAND_WORKER_IDLE_SWEEP_SECONDS, value: "1800" }  # idle worker waits on Redis; lets Neon Free scale to zero
 
 services:
   - type: web

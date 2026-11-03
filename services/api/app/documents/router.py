@@ -56,6 +56,7 @@ async def upload(file: Annotated[UploadFile, File()], p: Annotated[Principal, De
     await p.session.flush()
     await queue.enqueue(p.session, org_id=p.org_id, kind="ingest_document", payload={"document_id": str(doc.id)},
                         idempotency_key=f"ingest:{doc.id}:{doc.version}")
+    await queue.wake_worker(state.redis)
     await audit.record(p.session, action="document.uploaded", org_id=p.org_id, actor=p.user.id, resource_type="document",
                        resource_id=doc.id, ip=p.ip, size=len(data), type=kind)
     return _view(doc)
@@ -82,13 +83,14 @@ async def get_document(doc_id: UUID, p: Annotated[Principal, Depends(require(P.D
 
 
 @router.post("/{doc_id}/reprocess", status_code=202)
-async def reprocess(doc_id: UUID, p: Annotated[Principal, Depends(require(P.DOCS_WRITE))]):
+async def reprocess(doc_id: UUID, p: Annotated[Principal, Depends(require(P.DOCS_WRITE))], state: Annotated[AppState, Depends(get_state)]):
     d = await _get(p, doc_id)
     d.version += 1
     d.status, d.error = "queued", None
     await p.session.flush()
     await queue.enqueue(p.session, org_id=p.org_id, kind="ingest_document", payload={"document_id": str(d.id)},
                         idempotency_key=f"ingest:{d.id}:{d.version}")
+    await queue.wake_worker(state.redis)
     await audit.record(p.session, action="document.reprocess", org_id=p.org_id, actor=p.user.id, resource_type="document", resource_id=d.id, ip=p.ip)
     return _view(d)
 
@@ -107,6 +109,7 @@ async def delete_document(doc_id: UUID, p: Annotated[Principal, Depends(require(
     except StorageError:
         pass  # DB state is authoritative; an orphaned object is reaped by the lifecycle job (see ops docs)
     await queue.enqueue(p.session, org_id=p.org_id, kind="analyze", payload={}, idempotency_key=f"analyze:del:{d.id}")
+    await queue.wake_worker(state.redis)
     await audit.record(p.session, action="document.deleted", org_id=p.org_id, actor=p.user.id, resource_type="document", resource_id=d.id, ip=p.ip)
 
 

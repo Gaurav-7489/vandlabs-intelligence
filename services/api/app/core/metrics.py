@@ -8,6 +8,7 @@ import redis.asyncio as aioredis
 
 RETENTION_HOURS = 72
 LAT_BUCKETS_MS = (50, 100, 250, 500, 1000, 5000)
+HEARTBEAT_KEY = "ops:worker:heartbeat"
 
 
 def _hour(ts: float | None = None) -> str:
@@ -42,15 +43,16 @@ async def summary(r: aioredis.Redis, hours: int = 24) -> dict[str, int]:
 
 
 async def publish_queue_snapshot(r: aioredis.Redis, snap: dict[str, Any]) -> None:
-    await r.set("ops:queue", json.dumps({**snap, "at": time.time()}), ex=300)
+    await r.set("ops:queue", json.dumps({**snap, "at": time.time()}), ex=7200)
 
 
 async def queue_snapshot(r: aioredis.Redis) -> dict[str, Any]:
+    hb = await r.get(HEARTBEAT_KEY)
+    hb_age = round(time.time() - float(hb), 1) if hb else None
     raw = await r.get("ops:queue")
-    if not raw:
-        return {"available": False, "worker_stale": True}
-    snap = json.loads(raw)
-    snap["available"] = True
-    snap["age_seconds"] = round(time.time() - snap["at"], 1)
-    snap["worker_stale"] = snap["age_seconds"] > 90  # worker has not reported recently => down or wedged
+    snap: dict[str, Any] = json.loads(raw) if raw else {}
+    snap["available"] = bool(raw)
+    snap["age_seconds"] = round(time.time() - snap["at"], 1) if raw else None  # queue counts are refreshed after each work cycle
+    snap["heartbeat_age_seconds"] = hb_age
+    snap["worker_stale"] = hb_age is None or hb_age > 90  # liveness comes from the Redis heartbeat (every 30 s)
     return snap

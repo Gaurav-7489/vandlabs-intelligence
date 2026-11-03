@@ -49,6 +49,7 @@ async def test_worker_publishes_queue_snapshot_and_job_counters(client, make_env
     admin = await _platform_admin(owner_sql)
     await client.post(f"{API}/documents", headers=env.h("manager"), files={"file": ("a.csv", sample_csv(), "text/csv")})
     await worker.publish_stats()
+    await worker.heartbeat()
     q = (await client.get(f"{API}/ops/metrics", headers=hdr(admin))).json()["queue"]
     assert q["available"] and not q["worker_stale"] and q["by_status"].get("queued", 0) >= 1
     await drain(worker)
@@ -56,11 +57,13 @@ async def test_worker_publishes_queue_snapshot_and_job_counters(client, make_env
     assert c.get("jobs.completed", 0) >= 2  # ingest + analyze
 
 
-async def test_stale_worker_snapshot_is_flagged(app_ctx):
+async def test_worker_liveness_comes_from_the_redis_heartbeat(app_ctx):
     _, app, _ = app_ctx
     r = app.state.vand.redis
-    await r.set("ops:queue", json.dumps({"by_status": {}, "at": time.time() - 600}), ex=300)
-    snap = await metrics.queue_snapshot(r)
-    assert snap["worker_stale"] is True
-    await r.delete("ops:queue")
-    assert (await metrics.queue_snapshot(r))["worker_stale"] is True  # no snapshot at all => also stale
+    await r.delete(metrics.HEARTBEAT_KEY)
+    assert (await metrics.queue_snapshot(r))["worker_stale"] is True  # never reported => stale
+    await r.set(metrics.HEARTBEAT_KEY, str(time.time() - 600))
+    assert (await metrics.queue_snapshot(r))["worker_stale"] is True  # old heartbeat => down or wedged
+    await r.set(metrics.HEARTBEAT_KEY, str(time.time()))
+    await r.set("ops:queue", json.dumps({"by_status": {}, "at": time.time() - 3000}), ex=300)
+    assert (await metrics.queue_snapshot(r))["worker_stale"] is False  # idle worker with old counts is still alive

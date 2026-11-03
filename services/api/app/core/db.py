@@ -13,11 +13,19 @@ from app.core.config import Settings, get_settings
 _LIBPQ_ONLY = {"sslmode", "channel_binding", "sslrootcert", "sslcert", "sslkey", "target_session_attrs"}
 
 
+def with_driver(url: str, driver: str) -> str:
+    """Providers (Neon, Render) hand out `postgres://` / `postgresql://` URLs; SQLAlchemy would pick psycopg2 (not installed)."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return f"postgresql+{driver}://" + url[len(prefix):]
+    return url
+
+
 def normalize_asyncpg_url(url: str) -> tuple[str, dict[str, Any]]:
     """Hosted Postgres URLs (Neon, etc.) carry libpq params such as `sslmode=require&channel_binding=require`.
     SQLAlchemy forwards query params to asyncpg.connect(), which rejects them. Translate TLS intent to asyncpg's `ssl`
     and drop libpq-only params. TLS is never silently downgraded: any sslmode other than disable/allow/prefer => required."""
-    u = make_url(url)
+    u = make_url(with_driver(url, "asyncpg"))
     q = dict(u.query)
     args: dict[str, Any] = {}
     mode = q.get("sslmode")

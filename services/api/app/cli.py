@@ -5,6 +5,7 @@ import sys
 from sqlalchemy import create_engine, text
 
 from app.core.config import get_settings
+from app.core.db import with_driver
 
 
 def main() -> None:
@@ -12,7 +13,7 @@ def main() -> None:
         print("usage: python -m app.cli create-platform-admin <email>")
         raise SystemExit(2)
     email = sys.argv[2].strip().lower()
-    eng = create_engine(os.environ.get("OWNER_DATABASE_URL") or get_settings().migration_database_url)
+    eng = create_engine(with_driver(os.environ.get("OWNER_DATABASE_URL") or get_settings().migration_database_url, "psycopg"))
     with eng.begin() as c:
         c.execute(text("SELECT set_config('app.identity_resolution', 'on', true)"))  # users has FORCE RLS
         c.execute(text("INSERT INTO users (email, is_platform_admin) VALUES (:e, true) "

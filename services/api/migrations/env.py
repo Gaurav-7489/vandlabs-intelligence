@@ -10,8 +10,11 @@ target_metadata = Base.metadata
 
 def _url() -> str:
     import os
+
     # OWNER_DATABASE_URL is deliberately NOT a VAND_* setting: it exists only in the migration job, never in API/worker runtime.
-    return config.get_main_option("sqlalchemy.url") or os.environ.get("OWNER_DATABASE_URL") or get_settings().migration_database_url
+    from app.core.db import with_driver
+    url = config.get_main_option("sqlalchemy.url") or os.environ.get("OWNER_DATABASE_URL") or get_settings().migration_database_url
+    return with_driver(url, "psycopg")  # Neon's direct URL (postgresql://…?sslmode=require) works as-is with psycopg 3
 
 
 def run_migrations_online() -> None:

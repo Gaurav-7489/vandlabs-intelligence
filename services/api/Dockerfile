@@ -10,7 +10,8 @@ RUN pip install --no-deps -r requirements.runtime.lock.txt
 COPY --chown=vand:vand . .
 USER vand
 EXPOSE 8000
-HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % __import__('os').environ.get('PORT','8000'), timeout=2).status==200 else 1)"
+# No Docker HEALTHCHECK: this image also runs the worker (no HTTP). The API is health-checked by the platform at /healthz;
+# worker liveness is reported via the ops queue snapshot (`worker_stale`).
 # --proxy-headers is NOT enabled: client IP comes from CF-Connecting-IP, trusted only on edge-authenticated requests.
 # Render (and most PaaS) inject $PORT; default 8000 locally. exec => uvicorn is PID 1 and receives SIGTERM for graceful shutdown.
 CMD ["sh", "-c", "exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port ${PORT:-8000} --timeout-graceful-shutdown 20"]

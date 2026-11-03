@@ -6,7 +6,7 @@ Legend: **[APPROVE]** needs your explicit approval (cost or account change) · *
 ## Approvals needed (summary)
 | # | Approval | Recurring cost | Why |
 |---|---|---|---|
-| A1 | Create a **new** Neon project `vandlabs-intelligence-staging` in your existing free org (region: Singapore, matching your other projects) | $0 (Free: 100 CU-h, 1 GB, scale-to-zero) | Separate from the Automobile Engine / AVIENDO projects |
+| A1 | Create a **new** Neon project `vandlabs-intelligence-staging` in your existing free org (region: Singapore, matching your other projects) | $0 (Free: 100 CU-h/project/month, 1 GB, scale-to-zero after 5 min idle) | Separate from the Automobile Engine / AVIENDO projects. The idle worker no longer polls Postgres (Redis wake + 30 min sweep), so compute can scale to zero; a 1-second poller would have used ≈182 CU-h/month at 0.25 CU and Neon would suspend the DB mid-month |
 | A2 | Create R2 bucket `vand-intel-staging-docs` (+ `vand-intel-staging-backups`) and two scoped API tokens in your existing Cloudflare account | $0 within free tier (10 GB-mo, 1M Class A, 10M Class B) | Private document + encrypted backup storage |
 | A3 | Deploy Worker `vandlabs-intelligence-web-staging` (workers.dev URL) in the same Cloudflare account | $0 on Workers Free (100k Worker req/day) | Does not touch the 12 existing Workers |
 | A4 | Render: API web service + background worker (Starter each) | **≈ $14/mo** ($7 + $7) | Python runtime |
@@ -23,7 +23,7 @@ Expected: **≈ $14–16/mo** (ClamAV running ~10 h), +$35 only if Auth0 Free la
 3. **[APPROVE A2] R2**: buckets private (no public access, no custom domain). Token 1: Object Read & Write on `vand-intel-staging-docs` only. Token 2: Object Write on `vand-intel-staging-backups` only. Enable object versioning/lifecycle if available on your plan.
 4. **[APPROVE A7] Auth0**: follow `docs/operations/auth0-setup.md`. First check in the tenant that MFA (OTP/WebAuthn) can be required on the plan; confirm the ID token carries `amr: ["mfa"]` after an MFA login. Create synthetic users: requester, approver, auditor, outsider (separate org), owner (MFA enrolled).
 5. **[APPROVE A4–A6] Render**: connect the GitHub repo, apply `render.yaml` (Blueprint). Fill every `sync: false` variable from the secret manager. Generate: `VAND_SESSION_ENCRYPTION_KEY` (Fernet), `VAND_ORIGIN_AUTH_SECRET` (≥ 32 random chars). Use **pooled** Neon URLs + `VAND_DB_DISABLE_STATEMENT_CACHE=true`. Do **not** add any owner/migration URL (the app refuses to start if present).
-6. **[CLAUDE] Migrations**: GitHub secret `STAGING_OWNER_DATABASE_URL` (direct endpoint) → run *Deploy staging (manual)* → `migrate` job (`alembic upgrade head` → 0004). Then create the first platform admin with `OWNER_DATABASE_URL=… python -m app.cli create-platform-admin <your email>`.
+6. **[CLAUDE] Migrations**: GitHub secret `STAGING_OWNER_DATABASE_URL` (direct endpoint; the plain `postgresql://…?sslmode=require` string from Neon works as-is — driver selection is automatic) → run *Deploy staging (manual)* → `migrate` job (`alembic upgrade head` → 0004). Then create the first platform admin with `OWNER_DATABASE_URL=… python -m app.cli create-platform-admin <your email>`.
 7. **[APPROVE A3] Cloudflare Worker**: set `API_ORIGIN` in `apps/web/wrangler.jsonc` to the Render API URL; `wrangler secret put ORIGIN_AUTH_SECRET` (same value as Render); `npm run build && wrangler deploy` (already validated with `--dry-run`). Set `VAND_PUBLIC_BASE_URL` / `VAND_CORS_ORIGINS` on Render to the Worker URL; Auth0 callback = `<worker URL>/api/v1/auth/callback`.
 8. **[YOU] Cloudflare edge** (workers.dev has limited zone features; a custom domain on your zone enables full WAF): managed WAF ruleset, rate-limiting rule on `/api/v1/auth/*` and `/api/v1/documents`, Bot Fight Mode on the zone, Turnstile only if login abuse appears.
 9. **[YOU] GitHub secrets for workflows**: `CLOUDFLARE_API_TOKEN` (Workers deploy, scoped), `CLOUDFLARE_ACCOUNT_ID`, `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_WORKER`, `STAGING_OWNER_DATABASE_URL`, `STAGING_BACKUP_DATABASE_URL`, `BACKUP_ENCRYPTION_PASSPHRASE`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`, `R2_ENDPOINT`; variable `STAGING_WEB_URL`.
@@ -36,6 +36,12 @@ Expected: **≈ $14–16/mo** (ClamAV running ~10 h), +$35 only if Auth0 Free la
     - Suspend ClamAV ⇒ uploads held as `scan_pending`; resume ⇒ processed.
     - Review Render logs for errors; check `/api/v1/ops/metrics` (platform admin).
 11. **[YOU] Rollback plan**: Render "rollback to previous deploy"; `wrangler rollback`; migrations are additive (0002–0004 downgrades exist and were not destructive except 0001).
+
+## Known operational limits in this staging design
+- Neon Free: first request after ≥5 min idle pays a cold start (typically sub-second to a few seconds); 100 CU-h cap ⇒ suspension, not billing, if exceeded. Watch usage in the Neon console during the first week.
+- Render Key Value Free: no persistence; a restart signs everyone out and resets rate-limit counters (fail-closed policies keep expensive endpoints protected while Redis is down).
+- ClamAV suspended ⇒ uploads wait in `scan_pending` (never indexed unscanned).
+- Single API and worker instance: no HA; acceptable for staging only.
 
 ## Not in scope for staging approval
 Production resources, paid Neon/Render plans beyond the above, any real customer data, enabling AI providers, merging PR #1.

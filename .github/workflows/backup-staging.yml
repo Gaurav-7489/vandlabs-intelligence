@@ -8,8 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: Install client tools
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client awscli gnupg
+      - name: Install tools (Postgres client comes from the postgres:17 image to match Neon PG 17 exactly)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq awscli gnupg
       - name: Dump (read-only BYPASSRLS role), encrypt, upload
         env:
           BACKUP_URL: ${{ secrets.STAGING_BACKUP_DATABASE_URL }}
@@ -20,7 +20,8 @@ jobs:
         run: |
           set -euo pipefail
           f="vand-staging-$(date -u +%Y%m%dT%H%M%SZ).pgc"
-          pg_dump "$BACKUP_URL" -Fc -f "$f"
+          # Ubuntu's default client is v16, which refuses to dump a PG 17 server: use the matching image.
+          docker run --rm -v "$PWD:/out" -w /out postgres:17 pg_dump "$BACKUP_URL" -Fc -f "/out/$f"
           gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" --symmetric --cipher-algo AES256 -o "$f.gpg" "$f"
           rm "$f"
           aws s3 cp "$f.gpg" "s3://vand-intel-staging-backups/$f.gpg" --endpoint-url "$R2_ENDPOINT"
