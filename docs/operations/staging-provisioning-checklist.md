@@ -12,9 +12,9 @@ Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done o
 | A1 | Neon project `vandlabs-intelligence-staging` (id `shy-leaf-28061787`, PG 17, `aws-ap-southeast-1`, org `Gaurav`) | ✅ approved | **Exists** (owner-verified). Roles, migrations, RLS checks **not yet done** (step 2) | $0 Free |
 | A2 | R2 buckets `vand-intel-staging-docs`, `vand-intel-staging-backups` + scoped tokens, existing Cloudflare account | ✅ approved (free tier) | Unknown — check before creating (step 3) | $0 within free tier |
 | A3 | Cloudflare **frontend** Worker | ✅ approved (free) | **Superseded — do not deploy.** Vercel already hosts the SPA; `/api/v1/*` now goes through the Vercel gateway function (ADR 0007). `apps/web/worker/` is kept only as an optional future edge | — |
-| A4 | Python API + worker hosting (Render Starter ×2, Hobby workspace) | ❌ **not approved** | Not created. **Blocks every live backend step** | $14/mo ($7 + $7, prorated); +$25/mo only if a Pro workspace is required |
+| A4 | Python API + worker hosting (Render Starter ×2, Hobby workspace) | ❌ **not approved** | Not created. **Blocks every live backend step** | $14/mo ($7 + $7, prorated); Hobby workspace ($0) supports workers/private services (Render docs) |
 | A5 | Redis (Render Key Value Free) | ✅ approved (free) | **Deferred**: only reachable from Render services, so it is created together with A4 | $0 |
-| A6 | ClamAV private service (Pro 4 GB), suspended outside test windows | ❌ **not approved** | Not created. Staging config refuses to start without a scanner | $85/mo prorated ≈ $0.116/h ⇒ ≈ $1.20 for 10 h/mo |
+| A6 | ClamAV private service (Pro 4 GB), suspended outside test windows | ❌ **not approved** | Not created. Staging config refuses to start without a scanner | $85/mo prorated ≈ $0.116/h ⇒ ≈ $1.20 for 10 h/mo (suspended-state billing unconfirmed) |
 | A7 | Auth0 staging tenant, **Free plan only** | ✅ approved (Free) | Unknown. If Free cannot require MFA → stop and ask; do not buy Essentials | $0 (Essentials $35/mo needs a new approval) |
 | A8 | AI providers disabled (no keys) | ✅ approved | In effect by default (no keys in config) | $0 |
 | A9 | Live 17-step acceptance run with synthetic users | ⏳ prepare only | Prepared and **rehearsed locally** (passes); live run needs approval after A4/A6 | — |
@@ -34,7 +34,8 @@ Legend: **[YOU]** only the account owner can do it · **[CLAUDE]** can be done o
 7. **[YOU] Vercel (existing project — do not create another)**: Settings → Environment Variables, **Production scope only**: `VAND_API_ORIGIN=https://<API host>` and `VAND_ORIGIN_AUTH_SECRET=<same as API>`. Do not set them for Preview (the gateway refuses to proxy there unless `VAND_GATEWAY_ALLOW_PREVIEW=true`). Never use a `VITE_` prefix for either. Redeploy `main`. Confirm root directory `apps/web`, framework Vite, build `npm run build`, output `dist`.
 8. **[YOU] Edge protections**: on `*.vercel.app` use Vercel Firewall rules if your plan has them (rate limit `/api/v1/auth/*`, `/api/v1/documents`); the API's own Redis-backed limits apply regardless. Full Cloudflare WAF needs a custom domain (not approved).
 9. **[YOU] GitHub secrets for workflows**: `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_WORKER`, `STAGING_OWNER_DATABASE_URL`, `STAGING_BACKUP_DATABASE_URL`, `BACKUP_ENCRYPTION_PASSPHRASE`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`, `R2_ENDPOINT`; variables `STAGING_WEB_URL=https://vandlabs-intelligence.vercel.app`, `STAGING_API_URL=https://<API host>`. (Cloudflare Worker deploy secrets are no longer needed.)
-10. **[CLAUDE, after A9 approval] Verification** — synthetic data only:
+10. **Post-deploy smoke test (part of deployment, non-destructive):** `tests/staging/live_checks.sh` only.
+    **[CLAUDE, after A9 approval] Acceptance** — synthetic data only (full plan: phase-1-7-integration.md §A9):
     - `curl https://<API host>/api/v1/auth/session` ⇒ 403 (direct origin refused); `https://vandlabs-intelligence.vercel.app/api/v1/auth/session` ⇒ 200 `{"authenticated":false}`.
     - Preview deployment `/api/v1/auth/session` ⇒ 503 `gateway_unavailable`.
     - `tests/staging/acceptance.mjs` with `BASE_URL=https://vandlabs-intelligence.vercel.app IDP=auth0 EXPECT_SCAN=clean`.

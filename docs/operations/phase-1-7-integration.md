@@ -39,8 +39,8 @@ push and the GitHub API were refused for this repository.
 | Check | Result |
 |---|---|
 | `ruff check . && mypy app` | clean (58 files) |
-| `pytest -q -rs` (Postgres 17 + Redis 7, migrations from scratch) | **151 passed**, 0 skipped |
-| Web `typecheck`, `lint`, `vitest`, `build` (`VERCEL=1` embeds 4 MB) | clean; **87 passed**; build OK |
+| `pytest -q -rs` (Postgres 17 + Redis 7, migrations from scratch) | **151 passed**, 0 skipped (re-run on clean `94e496e`) |
+| Web `typecheck`, `lint`, `vitest`, `build` (`VERCEL=1` embeds 4 MB) | clean; **87 passed**; build OK (re-run on clean `94e496e`) |
 | OpenAPI contract export | unchanged |
 | Runtime lock check | 52 pins match the tested lock |
 | detect-secrets (CI command) | clean |
@@ -57,26 +57,61 @@ Dockerfile directly (not verified on Render).
 **Not verified:** Auth0 (MFA entitlement, real `amr`), Neon (owner-role BYPASSRLS ability, pooler), R2, Render (build,
 private networking, suspension billing), Vercel (function runtime, `x-real-ip`, env scoping, plan).
 
-## A4 / A6 approval request (prices from Render's pricing page and changelog as quoted in search results on
-2026-11-03; render.com itself was unreachable from the sandbox — confirm on the page before approving)
-| Resource | Plan | Price | Expected staging use | Expected cost |
-|---|---|---|---|---|
-| Render workspace | Hobby | $0 (Pro is $25/month flat since 1 Aug 2026) | — | $0 — **confirm Hobby allows paid private services**; if Pro is required, +$25 |
-| `vand-api-staging` web service | Starter 512 MB / 0.5 CPU | $7/month, prorated per second | always on | $7.00 |
-| `vand-worker-staging` background worker | Starter | $7/month, prorated | always on | $7.00 |
-| `vand-redis-staging` Key Value | Free (25 MB, no persistence) | $0 | always on | $0 |
-| `vand-clamav-staging` private service | Pro 4 GB / 2 CPU (ClamAV: min 3 GiB, configure 4 GiB) | $85/month ≈ **$0.116/h** prorated | suspended; ~10 h of test windows/month | ≈ $1.20 (≈ $85 if left running) |
-| Bandwidth | Hobby includes 5 GB/month (third-party report) | overage not verified | synthetic tests | ≈ $0 |
-| **Total** | | | | **≈ $15.20/month** (+$25 if Pro workspace is required; +$35 Auth0 Essentials only if Free lacks MFA — separate decision) |
+## A4 / A6 approval request (re-checked 2026-11-03)
+Vendor sites are blocked from the build sandbox; figures below come from the vendors' own pages **as quoted in search
+results** on 2026-11-03. Confirm on the linked pages before approving.
 
-Not verified: whether a **suspended** service accrues charges (forum staff say charges accrue while provisioned;
-the docs page could not be read). Scanner schedule: resume before a test window (Render → service → Resume), wait
-~2 min for signatures, test, then Suspend. While suspended uploads wait unindexed in `scan_pending` and are processed
-automatically on resume (see deployment.md).
+| Resource (all Render, region Singapore) | Plan | Price | Status of the figure | Expected staging cost |
+|---|---|---|---|---|
+| Workspace | Hobby | $0 + compute; up to 25 services, 1 member, 5 GB bandwidth/month ([plans by feature](https://render.com/docs/new-workspace-plans), [changelog](https://render.com/changelog/updated-plans-for-render-workspaces)) | **Confirmed by official doc**: background workers and private services are available from Starter on Hobby; no Pro workspace needed | $0 |
+| `vand-api-staging` web service | Starter 512 MB | $7/month, prorated per second ([pricing](https://render.com/pricing)) | confirmed | $7.00 |
+| `vand-worker-staging` background worker | Starter 512 MB | $7/month, prorated | confirmed | $7.00 |
+| `vand-redis-staging` Key Value | Free 25 MB | $0 | confirmed | $0 |
+| `vand-clamav-staging` private service | Pro 4 GB / 2 CPU | $85/month ≈ $0.116/h, prorated per second | price confirmed; ClamAV needs ≥ 3 GiB, 4 GiB advised ([ClamAV Docker docs](https://docs.clamav.net/manual/Installing/Docker.html)) — Standard 2 GB is too small | **estimate** ≈ $1.20 for ~10 h/month |
+| Bandwidth | included 5 GB/month on Hobby | overage price not verified | estimate | ≈ $0 (synthetic tests) |
+| Disks / storage | none (no persistent disks in `render.yaml`) | — | confirmed by config | $0 |
+| **Total** | | | | **≈ $15.20/month** (fixed $14.00 + scanner hours) |
+
+**Unresolved (owner to confirm in the Render dashboard before approving):** whether a *suspended* service accrues any
+charge (no official statement found; third-party guidance implies it does not), and any minimum charge per service
+start. Worst case if the scanner is forgotten in the running state: $85/month — mitigated by suspending after each
+window and checking the Billing page weekly.
+
+**Not part of A4/A6 (separate decisions):** Auth0 Essentials $35/month only if Free cannot enforce MFA — sources
+conflict and several state MFA is not on Free ([Auth0 MFA docs: factors depend on plan](https://auth0.com/docs/secure/multi-factor-authentication/multi-factor-authentication-factors.md));
+Vercel Pro if the project is on Hobby (Hobby is limited to non-commercial personal use per
+[Vercel fair-use guidelines](https://vercel.com/docs/limits/fair-use-guidelines)).
+
+### Exact request
+> Approve A4 + A6: on a Render **Hobby** workspace in Singapore, create from `render.yaml` at the approved commit:
+> `vand-api-staging` (web, Starter), `vand-worker-staging` (worker, Starter), `vand-redis-staging` (Key Value, Free),
+> `vand-clamav-staging` (private service, Pro 4 GB, **suspended except during test windows**). Expected ≈ $15.20/month;
+> hard ceiling if the scanner were left running ≈ $99/month.
+
+- **Scanner schedule:** resume at the start of a test window → wait ~2 min (signatures) → test → suspend. Target ≤ 10 h/month.
+- **Pending uploads while suspended:** accepted, stored, `scan_pending`, never indexed or marked clean; retried every
+  30 min; released automatically within ~60 s of the scanner answering; dead-lettered (still unindexed) after 7 days.
+- **Rollback:** see deployment.md — Render rollback per service, Vercel Instant Rollback / remove `VAND_API_ORIGIN`
+  (gateway fails closed), schema via restore into a new Neon branch (no reliance on downgrade scripts). Deleting the four
+  Render services stops all charges.
+
+## A9 live acceptance plan (prepared; run only after A9 approval)
+| # | Check | How | Expected |
+|---|---|---|---|
+| 1 | Boundary checks (also used as the post-deploy smoke test; non-destructive, no uploads of files) | `tests/staging/live_checks.sh` with `WEB_URL`, `API_URL`, `PREVIEW_URL`, `ORIGIN_AUTH_SECRET` in env | all PASS: gateway 200, direct origin 403 (with and without a guessed secret), traversal 404, 413 for 4.6 MB, preview 503, `/readyz` database/db_role/redis ok |
+| 2 | 17-step journey (real Auth0, real ClamAV, R2, Neon) | `tests/staging/acceptance.mjs` `IDP=auth0 EXPECT_SCAN=clean` with the 5 synthetic users | ACCEPTANCE PASSED |
+| 3 | Cross-tenant denial | step 14 of the journey + outsider user | 403 foreign org, 404 foreign id |
+| 4 | Genuine MFA | sign in as owner with MFA → `/api/v1/me` shows `mfa: true`; owner signing in without completing MFA (factor not enrolled) → privileged pages `mfa_required`; inspect a real ID token (Auth0 logs) for `amr` | MFA only when actually performed; no Action that sets `amr` unconditionally |
+| 5 | Upload boundaries + quarantine | SPA with a 4.2 MB file; `tests/staging/scanner_checks.mjs` (EICAR) | client refusal message; EICAR quarantined, not searchable |
+| 6 | Prolonged scanner outage | `scanner_checks.mjs OUTAGE=1 OUTAGE_WAIT_S=3600`; suspend ClamAV for > 30 min, then resume | held `scan_pending`, unindexed; processed automatically after resume |
+| 7 | Encrypted backup + restore | run *Backup staging*; restore into a **new Neon branch** with a temporary read token; drill checks + `scripts/verify_staging_db.sql` | counts match, RLS forced, all checks ok; branch and read token deleted afterwards |
+| 8 | Preview isolation | open a Vercel preview of the PR; `PREVIEW_URL=… live_checks.sh` | 503 `gateway_unavailable` |
 
 ## Remaining blockers (only these)
-1. **GitHub write access** for Claude (Claude GitHub App on this repo) — or push the bundle yourself.
-2. **Decisions:** A4 (+A6) at the cost above; confirm the Vercel plan (Hobby is restricted to non-commercial personal
-   use per Vercel's fair-use guidelines — VandLabs is a company; Pro would be a separate decision).
-3. **Owner steps (free):** Neon bootstrap on a branch; R2 buckets/tokens; Auth0 Free tenant + MFA check + 5 synthetic users.
+1. **GitHub write access** for Claude: the Claude GitHub App is not installed for `Gaurav-7489/vandlabs-intelligence`
+   (push 403 "not in this session's authorized repository set"; GitHub API also refused). Fix: install it at
+   https://claude.ai/connect-github and start a session with the repo selected — or push the bundle yourself.
+2. **Decisions:** A4 + A6 (≈ $15.20/month, request above); confirm the Vercel plan.
+3. **Owner steps (free):** Neon bootstrap on a branch (first check the owner role's BYPASSRLS); R2 buckets/tokens;
+   Auth0 Free tenant + real MFA test (likely not available on Free — then a decision on Essentials $35/month).
 4. **A9** live acceptance after 1–3.

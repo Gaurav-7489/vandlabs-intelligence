@@ -37,5 +37,5 @@ code with real ClamAV (test OIDC issuer) · live boundary checks vs local stack 
 1. Push the branch (Claude GitHub App on the repo, or push the bundle) and open the PR; check CI.
 2. Owner (free): Neon bootstrap on a branch; R2 buckets/tokens; Auth0 Free tenant + MFA check + 5 synthetic users;
    confirm the Vercel plan.
-3. Decide A4/A6. Then Render Blueprint → migrate job → platform admin → Vercel Production env vars → `live_checks.sh`.
+3. Decide A4/A6 (≈ $15.20/month on a $0 Hobby workspace; request in phase-1-7-integration.md). Then Render Blueprint → migrate job → platform admin → Vercel Production env vars → `live_checks.sh`.
 4. With A9: `acceptance.mjs`, `scanner_checks.mjs OUTAGE=1`, backup + restore into a Neon branch.
