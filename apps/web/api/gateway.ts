@@ -9,7 +9,7 @@
  * Preview/development deployments refuse to proxy unless VAND_GATEWAY_ALLOW_PREVIEW=true is set for that scope,
  * so a preview build can never reach the staging API with the staging secret by accident.
  */
-import { jsonError, proxyApi } from "../src/edge/proxy";
+import { jsonError, proxyApi } from "../src/edge/proxy.js";
 
 export default {
   async fetch(request: Request): Promise<Response> {
