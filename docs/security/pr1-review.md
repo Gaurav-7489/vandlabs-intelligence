@@ -31,6 +31,12 @@ Scope: all 146 files. Method: artifact/credential sweep, route inventory, advers
 | 20 | No SBOM | Low | CycloneDX SBOMs for production Python and shipped npm deps as CI artifacts | CI |
 | 21 | UI lacked document reprocess/delete, session revocation, invite link, direct-task entry (APIs existed) | Low (UX) | added with two-step delete; e2e `ui_actions.mjs` | CI e2e |
 
+| 22 | Provider DB URLs (`postgres://`, `postgresql://`) would select psycopg2 (not installed) for app, Alembic and CLI | High (would not start) | `with_driver()` normalisation | alembic + CLI run with a plain URL in tests |
+| 23 | `backup-staging.yml` used Ubuntu's pg client 16, which cannot dump PG 17 | High (no backups) | client from `postgres:17` image | config review |
+| 24 | Dockerfile HTTP HEALTHCHECK would mark the (HTTP-less) worker container unhealthy | Low | removed; platform checks `/healthz`, worker liveness via Redis heartbeat | — |
+| 25 | Worker polled Postgres every second ⇒ Neon Free never scales to zero (~182 CU-h/month vs 100 limit ⇒ DB suspended mid-month) | High (staging outage) | Redis wake signal + Redis heartbeat; DB touched only on work, due retries, or sweep | `test_idle_worker_opens_no_db_sessions_and_wakes_on_new_work` (0 DB sessions while idle) |
+| 26 | **Regression introduced by #25, caught before merge:** BLPOP on a client with a 1 s socket timeout abandoned the server-side wait; the next wake signal was swallowed and jobs waited for the sweep | High | dedicated blocking connection without socket timeout; Redis errors degrade to DB draining | `test_wake_signal_is_not_lost_after_long_idle` fails on the old code, passes on the fix |
+
 **Limit stated explicitly:** tenant isolation via RLS uses transaction-scoped settings (`app.org_id`, `app.identity_resolution`). It protects against queries that *forget* a filter, not against arbitrary SQL injection inside the app role (an injected statement could also call `set_config`). Parameterized queries everywhere remain the primary SQLi control; there is no string-built SQL with user input in the codebase.
 
 ## Verified unchanged

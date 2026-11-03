@@ -23,7 +23,7 @@ step("direct low-risk task created and labelled as not a decision");
 
 await page.getByRole("link", { name: "Knowledge" }).click();
 const fname = `ui-${Date.now()}.txt`;
-await page.locator('input[type="file"]').setInputFiles({ name: fname, mimeType: "text/plain", buffer: Buffer.from("ui action probe note") });
+await page.locator('input[type="file"]').setInputFiles({ name: fname, mimeType: "text/plain", buffer: Buffer.from(`ui action probe note ${fname}`) }); // unique content: uploads are de-duplicated by content hash
 const drow = page.locator("tr", { hasText: fname });
 await drow.getByText(/Completed|Requires review/).waitFor({ timeout: 60000 });
 await drow.getByRole("button", { name: "Reprocess" }).click();

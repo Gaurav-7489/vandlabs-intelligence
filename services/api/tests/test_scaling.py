@@ -73,6 +73,7 @@ async def test_concurrent_ai_generation_cap(client, make_env, gateway, fake, app
     await drain(w)
     await w.db.dispose()
     await w.redis.aclose()
+    await w.redis_block.aclose()
     ask = lambda: client.post(f"{API}/intelligence/ask", headers=env.h("staff"), json={"question": "zephyr delivery"})  # noqa: E731
     t1, t2 = asyncio.create_task(ask()), asyncio.create_task(ask())
     for _ in range(50):
@@ -117,8 +118,10 @@ async def test_two_workers_never_run_the_same_job_twice(client, make_env, worker
     done = await asyncio.gather(drain(w1), drain(w2))
     await w1.db.dispose()
     await w1.redis.aclose()
+    await w1.redis_block.aclose()
     await w2.db.dispose()
     await w2.redis.aclose()
+    await w2.redis_block.aclose()
     assert sum(done) >= 12
     rows = worker_sql.execute(text("SELECT attempts, status FROM jobs WHERE org_id = :o AND kind = 'ingest_document'"), {"o": env.org_id}).all()
     assert len(rows) == 12 and all(a == 1 and s == "completed" for a, s in rows)  # each claimed exactly once

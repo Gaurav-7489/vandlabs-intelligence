@@ -132,6 +132,7 @@ async def worker() -> AsyncIterator[Worker]:
     yield w
     await w.db.dispose()
     await w.redis.aclose()
+    await w.redis_block.aclose()
 
 
 async def drain(w: Worker, limit: int = 50) -> int:

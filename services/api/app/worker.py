@@ -37,6 +37,9 @@ class Worker:
         self.scanner = make_scanner(self.s)
         self.id = f"{socket.gethostname()}:{os.getpid()}"
         self.redis = aioredis.from_url(self.s.redis_url, decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
+        # Blocking reads (BLPOP) need their own connection WITHOUT a short socket timeout: if the client gave up after 1 s while
+        # the server-side BLPOP was still pending, the next wake signal would be delivered to the abandoned request and lost.
+        self.redis_block = aioredis.from_url(self.s.redis_url, decode_responses=True, socket_timeout=None, socket_connect_timeout=2.0)
         self._stop = asyncio.Event()
 
     async def publish_stats(self) -> None:
@@ -108,11 +111,13 @@ class Worker:
             await self.heartbeat()
             slice_s = max(1, int(min(30.0, deadline - time.monotonic())))
             try:
-                if await self.redis.blpop([WAKE_KEY], timeout=slice_s):
+                if await self.redis_block.blpop([WAKE_KEY], timeout=slice_s):
                     return True
-            except Exception as exc:  # noqa: BLE001 - Redis hiccup: fall back to a short sleep, then the DB sweep
+            except Exception as exc:  # noqa: BLE001
+                # Redis unavailable: degrade to checking Postgres directly (keeps jobs moving; may keep a serverless DB awake).
                 log.warning("wake_wait_failed", extra={"err": type(exc).__name__})
                 await asyncio.sleep(min(5.0, slice_s))
+                return True
         return False
 
     async def drain(self, grace_s: float = 5.0) -> int:
@@ -147,6 +152,7 @@ class Worker:
                 await self.drain()
         await self.db.dispose()
         await self.redis.aclose()
+        await self.redis_block.aclose()
         log.info("worker_stopped")
 
 
