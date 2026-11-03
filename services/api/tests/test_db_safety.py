@@ -25,21 +25,40 @@ async def test_owner_role_is_flagged_unsafe():
     assert not r.ok and any("owns tenant tables" in p for p in r.problems)
 
 
-async def test_superuser_and_bypassrls_flagged(owner_sql):
-    from sqlalchemy import text
-    owner_sql.execute(text("SELECT 1"))
-    pytest.importorskip("asyncpg")
-    # postgres superuser is not reachable with test credentials; verify the BYPASSRLS branch via a throwaway role instead
-    import subprocess
-    sql = "DROP ROLE IF EXISTS vand_rogue; CREATE ROLE vand_rogue LOGIN PASSWORD 'x' BYPASSRLS; GRANT USAGE ON SCHEMA public TO vand_rogue;"
-    res = subprocess.run(["su", "postgres", "-c", f"psql -d vand_test -c \"{sql}\""], capture_output=True)
-    if res.returncode != 0:
-        pytest.skip("cannot create throwaway role in this environment")
+@pytest.mark.parametrize("attr,expected", [("BYPASSRLS", "role has BYPASSRLS"), ("SUPERUSER", "role is a superuser")])
+async def test_privileged_roles_are_flagged_unsafe(admin_sql, attr, expected):
+    """Runs in CI too (superuser available via VAND_TEST_ADMIN_URL): a role that could bypass RLS must be detected."""
+    admin_sql("DROP ROLE IF EXISTS vand_rogue")
+    admin_sql(f"CREATE ROLE vand_rogue LOGIN PASSWORD 'x' {attr}")
+    admin_sql("GRANT USAGE ON SCHEMA public TO vand_rogue")
     try:
         r = await _check("postgresql+asyncpg://vand_rogue:x@localhost:5432/vand_test")
-        assert "role has BYPASSRLS" in r.problems
+        assert expected in r.problems and not r.ok
     finally:
-        subprocess.run(["su", "postgres", "-c", "psql -d vand_test -c \"REVOKE ALL ON SCHEMA public FROM vand_rogue; DROP ROLE vand_rogue\""], capture_output=True)
+        admin_sql("REVOKE ALL ON SCHEMA public FROM vand_rogue")
+        admin_sql("DROP ROLE vand_rogue")
+
+
+async def test_rls_actually_blocks_a_normal_role_but_not_a_bypassrls_role(admin_sql, make_env, client):
+    """The invariant itself, not just the detector: tenant rows are invisible to the app role and visible to a BYPASSRLS role."""
+    env = await make_env("bypass")
+    await client.post("/api/v1/tasks", headers=env.h("staff"), json={"title": "RLS probe task"})
+    admin_sql("DROP ROLE IF EXISTS vand_rogue")
+    admin_sql("CREATE ROLE vand_rogue LOGIN PASSWORD 'x' BYPASSRLS")
+    admin_sql("GRANT USAGE ON SCHEMA public TO vand_rogue")
+    admin_sql("GRANT SELECT ON ALL TABLES IN SCHEMA public TO vand_rogue")
+    try:
+        from sqlalchemy import text
+        for url, expect_visible in ((os.environ["VAND_DATABASE_URL"], False), ("postgresql+asyncpg://vand_rogue:x@localhost:5432/vand_test", True)):
+            eng = create_async_engine(url)
+            async with eng.begin() as c:
+                n = (await c.execute(text("SELECT count(*) FROM tasks WHERE title = 'RLS probe task'"))).scalar_one()
+            await eng.dispose()
+            assert (n > 0) is expect_visible
+    finally:
+        admin_sql("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM vand_rogue")
+        admin_sql("REVOKE ALL ON SCHEMA public FROM vand_rogue")
+        admin_sql("DROP ROLE vand_rogue")
 
 
 async def test_readyz_reports_db_role(client):

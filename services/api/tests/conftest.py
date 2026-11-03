@@ -49,6 +49,28 @@ def owner_sql():
 
 
 @pytest.fixture
+def admin_sql():
+    """Superuser connection for privileged-invariant tests. CI sets VAND_TEST_ADMIN_URL (postgres service container superuser);
+    locally falls back to `su postgres`. Skips only when neither is available."""
+    url = os.environ.get("VAND_TEST_ADMIN_URL")
+    if url:
+        eng = create_engine(url, isolation_level="AUTOCOMMIT")
+        with eng.connect() as c:
+            yield lambda sql: c.execute(text(sql))
+        return
+    import shutil
+    import subprocess
+    if shutil.which("su") is None or subprocess.run(["su", "postgres", "-c", "true"], capture_output=True).returncode != 0:
+        pytest.skip("no superuser access (set VAND_TEST_ADMIN_URL)")
+
+    def run(sql: str):
+        r = subprocess.run(["su", "postgres", "-c", f"psql -d vand_test -v ON_ERROR_STOP=1 -c \"{sql}\""], capture_output=True)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode()[:200])
+    yield run
+
+
+@pytest.fixture
 def worker_sql():
     """Sync connection as the worker role (the only role with cross-tenant visibility, and only on `jobs`)."""
     eng = create_engine(os.environ["VAND_WORKER_DATABASE_URL"].replace("+asyncpg", "+psycopg"))

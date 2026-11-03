@@ -54,3 +54,14 @@ async def test_direct_task_creation_is_audited_and_labelled_not_a_decision(clien
     actions = [e["action"] for e in (await client.get(f"{API}/audit", headers=env.h("auditor"))).json()["items"]]
     assert "task.created_direct" in actions
     assert hdr is not None
+
+
+async def test_readyz_hides_dependency_detail_from_non_edge_callers(make_env, client):
+    s = Settings(origin_auth_secret=SECRET)
+    app = create_app(s, ai=AIGateway(s, providers=[]))
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            anon = (await c.get("/readyz")).json()
+            assert anon == {"status": "ready"}  # no check names, no ai_provider/db_role detail
+            edge = (await c.get("/readyz", headers={"X-Origin-Auth": SECRET})).json()
+            assert edge["checks"]["db_role"] == "ok"

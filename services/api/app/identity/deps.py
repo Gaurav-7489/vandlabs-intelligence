@@ -69,7 +69,7 @@ async def _claims_from_request(request: Request, state: AppState) -> tuple[Claim
             return state.verifier.verify(tok), None
         assert state.oidc is not None
         return await state.oidc.verify_access_jwt(tok), None
-    sid = request.cookies.get(state.settings.session_cookie_name)
+    sid = request.cookies.get(state.settings.effective_cookie_name)
     if sid and state.settings.auth_mode == "oidc":
         rec = await state.sessions.get(sid)
         if rec is not None:

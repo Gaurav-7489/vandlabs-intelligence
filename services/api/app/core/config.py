@@ -98,7 +98,11 @@ class Settings(BaseSettings):
                 raise ValueError("auth_mode=dev is not permitted outside local/test")
             if not (self.oidc_issuer and self.oidc_audience and self.oidc_jwks_url):
                 raise ValueError("OIDC issuer, audience and JWKS URL are required")
-            if any("dev_" in u or "localhost" in u for u in (self.database_url, self.worker_database_url, self.migration_database_url)):
+            if "migration_database_url" in self.model_fields_set:
+                raise ValueError("Owner/migration credentials must not be present in the runtime environment (use OWNER_DATABASE_URL in the migration job only)")
+            if any(not o.startswith("https://") for o in self.cors_origin_list):
+                raise ValueError("cors_origins must be https origins outside local/test")
+            if any("dev_" in u or "localhost" in u for u in (self.database_url, self.worker_database_url)):
                 raise ValueError("Development database credentials/hosts are not permitted outside local/test")
             if len(self.origin_auth_secret) < 32:
                 raise ValueError("origin_auth_secret (>=32 chars) is required outside local/test")
@@ -111,6 +115,11 @@ class Settings(BaseSettings):
             if self.storage_backend == "local":
                 raise ValueError("Local object storage is not permitted outside local/test; configure S3/R2")
         return self
+
+    @property
+    def effective_cookie_name(self) -> str:
+        """`__Host-` prefix (browser-enforced: Secure, Path=/, no Domain) whenever cookies are Secure."""
+        return f"__Host-{self.session_cookie_name}" if self.cookie_secure else self.session_cookie_name
 
     @property
     def cookie_secure(self) -> bool:

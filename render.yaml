@@ -9,7 +9,7 @@ services:
     plan: starter
     healthCheckPath: /healthz
     numInstances: 1            # scale horizontally after load testing; state lives in Postgres/Redis
-    preDeployCommand: alembic upgrade head   # runs with the OWNER role URL below, never the app role
+    # Migrations are NOT run here: owner credentials must never exist in the API/worker runtime. See .github/workflows/deploy-staging.yml (migrate job).
     envVars:
       - { key: VAND_ENV, value: staging }
       - { key: VAND_AUTH_MODE, value: oidc }
@@ -24,7 +24,6 @@ services:
       - { key: VAND_ORIGIN_AUTH_SECRET, sync: false }
       - { key: VAND_DATABASE_URL, sync: false }             # Neon POOLED endpoint, role vand_app
       - { key: VAND_WORKER_DATABASE_URL, sync: false }      # role vand_worker
-      - { key: VAND_MIGRATION_DATABASE_URL, sync: false }   # Neon DIRECT endpoint, role vand_owner (migrations only)
       - { key: VAND_DB_DISABLE_STATEMENT_CACHE, value: "true" }
       - { key: VAND_REDIS_URL, fromService: { type: keyvalue, name: vand-redis-staging, property: connectionString } }
       - { key: VAND_STORAGE_BACKEND, value: s3 }

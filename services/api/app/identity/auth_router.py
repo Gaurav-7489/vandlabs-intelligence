@@ -27,7 +27,7 @@ def safe_return_to(v: str | None) -> str:
 
 
 def _set_cookie(resp: Response, s, sid: str) -> None:
-    resp.set_cookie(s.session_cookie_name, sid, max_age=s.session_absolute_ttl_seconds, httponly=True, secure=s.cookie_secure,
+    resp.set_cookie(s.effective_cookie_name, sid, max_age=s.session_absolute_ttl_seconds, httponly=True, secure=s.cookie_secure,
                     samesite="lax", path="/")
 
 
@@ -98,7 +98,7 @@ async def callback(request: Request, state: Annotated[AppState, Depends(get_stat
 @router.get("/session")
 async def session(request: Request, state: Annotated[AppState, Depends(get_state)]):
     """Session restoration for the SPA. Returns the CSRF token the SPA must echo on unsafe requests."""
-    sid = request.cookies.get(state.settings.session_cookie_name)
+    sid = request.cookies.get(state.settings.effective_cookie_name)
     rec = await state.sessions.get(sid) if sid else None
     if rec is None:
         return JSONResponse({"authenticated": False}, status_code=200)
@@ -117,7 +117,7 @@ async def logout(request: Request, state: Annotated[AppState, Depends(get_state)
         await audit.record(db, action="auth.logout", org_id=None, actor=ident.user.id, ip=ident.ip)
     url = await state.oidc.end_session_url(hint) if state.oidc else None
     resp = JSONResponse({"logout_url": url})
-    resp.delete_cookie(state.settings.session_cookie_name, path="/")
+    resp.delete_cookie(state.settings.effective_cookie_name, path="/")
     return resp
 
 

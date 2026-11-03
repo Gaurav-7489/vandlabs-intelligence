@@ -82,7 +82,7 @@ async def test_login_flow_creates_httponly_session_and_restores_it(oidc_env, org
     assert me["user"]["email"] == owner and me["memberships"][0]["org_id"] == org and me["user"]["mfa"] is True
     # the raw session record in Redis is encrypted (refresh token not stored in clear)
     rd = aioredis.from_url(s.redis_url, decode_responses=True)
-    sid = client.cookies.get(s.session_cookie_name)
+    sid = client.cookies.get(s.effective_cookie_name)
     blob = await rd.get(f"sess:{sid}")
     await rd.aclose()
     assert blob and "rt-" not in blob and "@" not in blob

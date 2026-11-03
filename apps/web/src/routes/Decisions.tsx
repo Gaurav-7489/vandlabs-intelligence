@@ -7,6 +7,8 @@ import { fmtDateTime, humanize } from "../lib/format";
 import { useCursorList } from "../lib/useCursorList";
 import { useOrgKey, useSession } from "../lib/session";
 
+type DecisionAction = "submit" | "approve" | "reject" | "defer" | "execute" | "outcome" | "close" | "reopen";
+type ActionResult = { execution?: { status: string; verified: boolean; error: string | null } };
 const DONE: Record<string, string> = { submit: "Submitted for approval.", approve: "Decision approved.", reject: "Decision rejected.", defer: "Decision deferred.",
   execute: "Action executed and verified.", outcome: "Outcome recorded.", close: "Decision closed.", reopen: "Decision reopened." };
 
@@ -47,7 +49,19 @@ export function DecisionDetail() {
   const [notes, setNotes] = useState("");
   const q = useQuery({ queryKey: [org, "decision", id], queryFn: ({ signal }) => api<Decision>(`/decisions/${id}`, { signal }) });
   const act = useMutation({
-    mutationFn: ({ path, body }: { path: string; body?: unknown }) => api<{ execution?: { status: string; verified: boolean; error: string | null } }>(`/decisions/${id}/${path}`, { method: "POST", body }),
+    mutationFn: ({ path, body }: { path: DecisionAction; body?: unknown }): Promise<ActionResult> => {
+      const opt = { method: "POST", body } as const; // explicit literal paths so the contract test can verify each against OpenAPI
+      switch (path) {
+        case "submit": return api<ActionResult>(`/decisions/${id}/submit`, opt);
+        case "approve": return api<ActionResult>(`/decisions/${id}/approve`, opt);
+        case "reject": return api<ActionResult>(`/decisions/${id}/reject`, opt);
+        case "defer": return api<ActionResult>(`/decisions/${id}/defer`, opt);
+        case "execute": return api<ActionResult>(`/decisions/${id}/execute`, opt);
+        case "outcome": return api<ActionResult>(`/decisions/${id}/outcome`, opt);
+        case "close": return api<ActionResult>(`/decisions/${id}/close`, opt);
+        case "reopen": return api<ActionResult>(`/decisions/${id}/reopen`, opt);
+      }
+    },
     onSuccess: (d, v) => {
       void qc.invalidateQueries({ queryKey: [org] }); setComment("");
       // Only claim success once the server confirms it. A failed execution returns HTTP 200 with status "failed".
@@ -60,7 +74,7 @@ export function DecisionDetail() {
   if (q.isError) return <ErrorPanel error={q.error} onRetry={() => void q.refetch()} />;
   const d = q.data;
   const mine = d.requested_by === me?.user.id;
-  const run = (path: string, body?: unknown) => act.mutate({ path, body });
+  const run = (path: DecisionAction, body?: unknown) => act.mutate({ path, body });
   return (
     <div className="space-y-4">
       <PageHeader title={d.title} subtitle={d.business_question} actions={<Badge tone={stateTone(d.state)}>{humanize(d.state)}</Badge>} />

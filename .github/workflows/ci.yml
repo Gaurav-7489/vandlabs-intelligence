@@ -36,7 +36,11 @@ jobs:
         run: mypy app
       - name: Tests (real Postgres + Redis, migrations applied from scratch)
         working-directory: services/api
-        run: pytest -q
+        env:
+          VAND_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vand_test   # superuser: privileged RLS/BYPASSRLS invariant tests
+        run: pytest -q -rs
+      - name: OpenAPI contract export is current (the SPA contract test reads it)
+        run: python scripts/export_openapi.py | diff -u docs/api/openapi.json -
       - name: Dependency vulnerability scan
         working-directory: services/api
         run: pip-audit -r requirements.in

@@ -13,6 +13,7 @@ from sqlalchemy import update
 
 from app.core.config import get_settings
 from app.core.db import Database, make_engine
+from app.core.dbsafety import check_role_safety
 from app.core.logging import configure_logging, get_logger
 from app.core.storage import make_storage
 from app.ingestion.pipeline import HoldForRetry, ingest_document
@@ -70,6 +71,11 @@ class Worker:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
+        if self.s.env in ("staging", "production"):
+            async with self.db.bare_session() as probe:
+                safety = await check_role_safety(probe)
+            if not safety.ok:
+                raise RuntimeError("Unsafe database role configuration: " + "; ".join(safety.problems))
         log.info("worker_started", extra={"worker": self.id})
         while not self._stop.is_set():
             if not await self.run_one():
