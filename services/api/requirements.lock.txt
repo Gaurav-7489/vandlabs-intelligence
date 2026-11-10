@@ -42,7 +42,7 @@ Jinja2==3.1.6
 jmespath==1.1.0
 joserfc==1.7.7
 jsonpatch==1.39
-jsonpath-ng==1.15.0
+jsonpath-ng==1.16.0
 jsonpointer==3.7
 jsonschema==4.26.0
 jsonschema-path==0.5.0
