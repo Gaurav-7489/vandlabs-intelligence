@@ -16,7 +16,7 @@ certifi==2026.10.23
 cffi==2.1.1
 cfn-lint==1.59.0
 charset-normalizer==3.5.2
-click==8.5.0
+click==8.5.1
 cryptography==50.0.2
 cyclonedx-python-lib==11.12.0
 defusedxml==0.7.1
