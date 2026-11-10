@@ -105,7 +105,7 @@ ruff==0.17.3
 s3transfer==0.19.3
 six==1.17.0
 sortedcontainers==2.4.0
-SQLAlchemy==2.0.55
+SQLAlchemy==2.1.8
 starlette==1.10.0
 sympy==1.14.0
 tomli==2.5.0
